@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  rag-platform:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rag-platform
+    volumes:
+      # Mount source code for development
+      - ./src:/app/src
+      - ./config:/app/config
+      - ./soc:/app/soc
+      # Persist data
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - OLLAMA_HOST=http://host.docker.internal:11434
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=INFO
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    stdin_open: true
+    tty: true
+    networks:
+      - rag-network
+    command: bash
+
+networks:
+  rag-network:
+    driver: bridge
+
+# Note: Ollama should run on the host machine for better GPU access
+# Access the container with: docker-compose run --rm rag-platform bash

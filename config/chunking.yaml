@@ -1,0 +1,33 @@
+# Chunking Strategy Configuration
+
+strategy: "hybrid"  # semantic, sliding_window, hybrid
+
+semantic_chunking:
+  respect_boundaries:
+    - "paragraph"
+    - "section"
+    - "sentence"
+  min_chunk_size: 128  # tokens
+  max_chunk_size: 1024  # tokens
+
+sliding_window:
+  chunk_size: 1024  # tokens
+  overlap: 0.2  # 20% overlap
+
+hybrid:
+  primary: "semantic"
+  fallback: "sliding_window"
+  max_chunk_size: 1024
+  overlap: 0.2
+
+special_handling:
+  preserve_tables: true
+  preserve_lists: true
+  preserve_code_blocks: true
+  keep_headers_with_content: true
+
+metadata:
+  include_page_numbers: true
+  include_section_titles: true
+  include_document_metadata: true
+  include_position: true  # chunk index within document

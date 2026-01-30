@@ -1,0 +1,21 @@
+# Model Configurations
+
+llm:
+  provider: "ollama"
+  model: "llama3.1:8b"
+  temperature: 0.1
+  top_p: 0.9
+  max_tokens: 2048
+  context_window: 8192
+
+embedding:
+  provider: "ollama"
+  model: "nomic-embed-text"
+  dimensions: 768
+  batch_size: 32
+  normalize: true
+
+reranker:
+  model: "cross-encoder/ms-marco-MiniLM-L-6-v2"
+  batch_size: 16
+  max_length: 512

@@ -1,0 +1,95 @@
+[tool.poetry]
+name = "rag-platform"
+version = "0.1.0"
+description = "Privacy-focused RAG platform with local Ollama LLM"
+authors = ["Gaurav"]
+readme = "README.md"
+packages = [{include = "src"}]
+
+[tool.poetry.dependencies]
+python = "^3.9"
+
+# LLM & Embeddings
+ollama = "^0.4.0"
+langchain = "^0.3.0"
+langchain-community = "^0.3.0"
+
+# Vector Store
+qdrant-client = "^1.11.0"
+
+# Re-ranker
+sentence-transformers = "^3.1.0"
+transformers = "^4.45.0"
+torch = "^2.4.0"
+
+# PDF Processing
+pymupdf = "^1.24.0"
+pdfplumber = "^0.11.0"
+pytesseract = "^0.3.13"
+pdf2image = "^1.17.0"
+pillow = "^10.0.0"
+
+# Text Processing
+tiktoken = "^0.8.0"
+
+# Graph Database
+networkx = "^3.1"
+
+# Storage
+sqlalchemy = "^2.0.35"
+pydantic = "^2.9.0"
+pydantic-settings = "^2.5.0"
+
+# API
+fastapi = "^0.115.0"
+uvicorn = "^0.32.0"
+python-multipart = "^0.0.17"
+
+# CLI & Web UI
+click = "^8.1.7"
+rich = "^13.9.0"
+gradio = "^4.44.0"
+
+# Utilities
+python-dotenv = "^1.0.1"
+pyyaml = "^6.0.2"
+loguru = "^0.7.2"
+tqdm = "^4.66.0"
+prometheus-client = "^0.21.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.0.0"
+pytest-asyncio = "^0.21.0"
+pytest-cov = "^4.0.0"
+black = "^23.0.0"
+ruff = "^0.3.0"
+mypy = "^1.0.0"
+ipython = "^8.12.0"
+
+[tool.poetry.scripts]
+rag = "src.cli.main:cli"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.black]
+line-length = 100
+target-version = ['py39']
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --cov=src --cov-report=term-missing"

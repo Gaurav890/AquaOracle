@@ -1,0 +1,34 @@
+# Development Docker Compose Configuration
+version: '3.8'
+
+services:
+  rag-platform-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rag-platform-dev
+    volumes:
+      # Mount entire source for hot-reload development
+      - .:/app
+      # But exclude these to avoid conflicts
+      - /app/data
+      - /app/.venv
+    environment:
+      - OLLAMA_HOST=http://host.docker.internal:11434
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=DEBUG
+      - WATCHFILES_FORCE_POLLING=true
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8000:8000"  # API port for future
+      - "7860:7860"  # Web UI port for future
+    stdin_open: true
+    tty: true
+    networks:
+      - rag-network
+    command: bash
+
+networks:
+  rag-network:
+    driver: bridge

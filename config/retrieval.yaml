@@ -1,0 +1,27 @@
+# Retrieval Pipeline Configuration
+
+stage1_vector_search:
+  top_k: 50
+  distance_metric: "cosine"
+  ef_search: 128  # HNSW search quality parameter
+
+stage2_reranking:
+  enabled: true
+  top_n: 10
+  score_threshold: 0.3
+
+stage3_graph_expansion:
+  enabled: true
+  max_hops: 1
+  max_neighbors: 10
+  similarity_threshold: 0.75
+  include_sequential: true  # Include adjacent pages
+
+stage4_context_assembly:
+  max_context_tokens: 8192
+  overlap_handling: "merge"  # merge, keep_highest, keep_all
+  sort_by:
+    - "relevance"
+    - "document"
+    - "page"
+  include_metadata: true
