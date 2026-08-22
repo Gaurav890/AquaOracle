@@ -31,12 +31,12 @@ logs/
 .git/
 .gitignore
 
-# Documentation
+# Documentation (README.md is required by pyproject.toml's packaging step)
 *.md
+!README.md
 docs/
 
-# Tests
-tests/
+# Tests (kept: README's dev instructions run pytest inside the container)
 .pytest_cache/
 .coverage
 htmlcov/
@@ -49,5 +49,3 @@ htmlcov/
 .ipynb_checkpoints/
 *.ipynb
 
-# Poetry
-poetry.lock
