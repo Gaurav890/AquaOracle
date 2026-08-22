@@ -152,6 +152,7 @@ def ingest_single_pdf(pdf_path: Path):
                     "text": chunk.text,
                     "token_count": chunk.token_count,
                     "page_numbers": chunk.page_numbers,
+                    "line_ranges": chunk.line_ranges,
                     "section_title": chunk.section_title,
                     "char_start": chunk.char_start,
                     "char_end": chunk.char_end,
@@ -190,6 +191,7 @@ def ingest_single_pdf(pdf_path: Path):
                     "doc_id": doc_id,
                     "text": chunk.text,
                     "page_numbers": chunk.page_numbers,
+                    "line_ranges": chunk.line_ranges,
                     "token_count": chunk.token_count,
                 }
                 for chunk in chunks

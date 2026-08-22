@@ -193,9 +193,11 @@ performed weekly using approved methods. OSHA standards [2] require daily
 monitoring for high-risk facilities.
 
 Sources:
-[1] CDC, 2017.pdf - Pages 45-47: "Water Quality Testing Protocols"
-[2] OSHA technical manual, 3, 7, 1999.pdf - Page 23: "Monitoring Requirements"
+[1] CDC, 2017.pdf - Page 45, Lines 12-18: "Water Quality Testing Protocols"
+[2] OSHA technical manual, 3, 7, 1999.pdf - Page 23, Lines 3-9: "Monitoring Requirements"
 ```
+
+Citations point to the specific lines a chunk came from, not just the page — chunks are kept small (~300 tokens) specifically so a line range stays tight rather than covering most of a page. Only sources the answer actually cites are listed; chunks retrieved but not used in the answer are left out.
 
 ---
 

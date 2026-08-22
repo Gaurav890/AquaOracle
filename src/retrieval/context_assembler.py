@@ -3,6 +3,8 @@
 from typing import List, Dict, Any, Tuple
 from loguru import logger
 
+from src.utils.citations import format_page_citation
+
 
 class ContextAssembler:
     """Assemble final context from retrieved and expanded chunks."""
@@ -140,12 +142,15 @@ class ContextAssembler:
         for i, chunk in enumerate(chunks, 1):
             doc_id = chunk.get("doc_id", "Unknown")
             page_numbers = chunk.get("page_numbers", [])
+            line_ranges = chunk.get("line_ranges", {})
 
             citation_key = f"[{i}]"
 
             citation_map[citation_key] = {
                 "doc_id": doc_id,
                 "page_numbers": page_numbers,
+                "line_ranges": line_ranges,
+                "location": format_page_citation(page_numbers, line_ranges),
                 "chunk_id": chunk.get("chunk_id", ""),
                 "text_preview": chunk.get("text", "")[:100] + "...",
             }
@@ -174,15 +179,7 @@ class ContextAssembler:
 
             if include_sources:
                 doc_id = chunk.get("doc_id", "Unknown")
-                page_numbers = chunk.get("page_numbers", [])
-
-                if page_numbers:
-                    if len(page_numbers) == 1:
-                        page_str = f"Page {page_numbers[0]}"
-                    else:
-                        page_str = f"Pages {page_numbers[0]}-{page_numbers[-1]}"
-                else:
-                    page_str = "Page Unknown"
+                page_str = format_page_citation(chunk.get("page_numbers", []), chunk.get("line_ranges"))
 
                 source_marker = f"[{i}] Source: {doc_id}, {page_str}"
                 formatted_parts.append(f"{source_marker}\n{text}")

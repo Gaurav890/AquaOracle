@@ -1,13 +1,16 @@
 # Retrieval Pipeline Configuration
 
 stage1_vector_search:
-  top_k: 50
+  top_k: 100  # chunks are ~300 tokens now (was 1024), so more candidates
+              # are needed to give the re-ranker an equivalent pool to pick from
   distance_metric: "cosine"
   ef_search: 128  # HNSW search quality parameter
 
 stage2_reranking:
   enabled: true
-  top_n: 10
+  top_n: 25  # ~25 * 300 tokens comes close to filling max_context_tokens
+             # below, same as ~10 * 1024-token chunks used to; otherwise
+             # smaller chunks alone would mean less total context per answer
   score_threshold: 0.3
 
 stage3_graph_expansion:

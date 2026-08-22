@@ -2,6 +2,8 @@
 
 from typing import List, Dict, Any
 
+from src.utils.citations import format_page_citation
+
 
 SYSTEM_PROMPT = """You are a helpful assistant that answers questions based ONLY on the provided context from source documents.
 
@@ -37,17 +39,8 @@ def build_rag_prompt(
 
     for i, chunk in enumerate(context_chunks, 1):
         doc_id = chunk.get("doc_id", "Unknown")
-        page_numbers = chunk.get("page_numbers", [])
         text = chunk.get("text", "")
-
-        # Format page numbers
-        if page_numbers:
-            if len(page_numbers) == 1:
-                page_str = f"Page {page_numbers[0]}"
-            else:
-                page_str = f"Pages {page_numbers[0]}-{page_numbers[-1]}"
-        else:
-            page_str = "Page Unknown"
+        page_str = format_page_citation(chunk.get("page_numbers", []), chunk.get("line_ranges"))
 
         # Create source marker
         source_marker = f"[{i}] Source: {doc_id}, {page_str}"

@@ -1,7 +1,7 @@
 """Semantic chunking for document text."""
 
-from typing import List, Dict, Any, Optional
-from dataclasses import dataclass
+from typing import List, Dict, Any, Optional, Tuple
+from dataclasses import dataclass, field
 import re
 from loguru import logger
 import tiktoken
@@ -20,6 +20,12 @@ class Chunk:
     char_start: int
     char_end: int
     metadata: Dict[str, Any]
+    # page_number -> (first_line, last_line), 1-indexed within that page as
+    # extracted from the PDF. Lets citations point at "Page 33, Lines 12-18"
+    # instead of just "Page 33". Chunks are kept small (see chunking.yaml)
+    # specifically so this range stays tight rather than covering most of a
+    # page.
+    line_ranges: Dict[int, Tuple[int, int]] = field(default_factory=dict)
 
 
 class Chunker:
@@ -79,23 +85,24 @@ class Chunker:
         self.logger.debug(f"Chunking document {doc_id}")
 
         # Split into paragraphs per-page so every paragraph keeps a precise
-        # page number instead of being tagged with the whole document's range.
-        paragraphs = []  # List[(page_number, text)]
+        # page number instead of being tagged with the whole document's
+        # range, and a precise line range within that page.
+        paragraphs = []  # List[(page_number, line_start, line_end, text)]
         for page_number, page_text in pages:
             page_text = self._strip_layout_noise(page_text)
-            for para in self._split_paragraphs(page_text):
-                paragraphs.append((page_number, para))
+            for text, line_start, line_end in self._split_paragraphs_with_lines(page_text):
+                paragraphs.append((page_number, line_start, line_end, text))
 
         if not paragraphs:
             return []
 
         # Group paragraphs into chunks
         chunks = []
-        current_chunk = []  # List[(page_number, text)]
+        current_chunk = []  # List[(page_number, line_start, line_end, text)]
         current_tokens = 0
         chunk_index = 0
 
-        for page_number, para in paragraphs:
+        for page_number, line_start, line_end, para in paragraphs:
             para_tokens = self._count_tokens(para)
 
             # Handle oversized paragraphs (split them)
@@ -112,11 +119,13 @@ class Chunker:
                     current_chunk = []
                     current_tokens = 0
 
-                # Split oversized paragraph
+                # Split oversized paragraph, keeping each sub-piece's own
+                # line range (relative offsets from _split_oversized_text,
+                # rebased onto the parent paragraph's absolute start line).
                 sub_chunks = self._split_oversized_text(para, para_tokens)
-                for sub_text in sub_chunks:
+                for sub_text, rel_start, rel_end in sub_chunks:
                     chunks.append(self._create_chunk(
-                        [(page_number, sub_text)],
+                        [(page_number, line_start + rel_start, line_start + rel_end, sub_text)],
                         doc_id,
                         chunk_index,
                         metadata or {}
@@ -125,7 +134,7 @@ class Chunker:
 
             # Add paragraph to current chunk if it fits
             elif current_tokens + para_tokens <= self.max_chunk_size:
-                current_chunk.append((page_number, para))
+                current_chunk.append((page_number, line_start, line_end, para))
                 current_tokens += para_tokens
 
             # Start new chunk if current is full
@@ -146,18 +155,18 @@ class Chunker:
                     overlap_text = []
                     overlap_token_count = 0
 
-                    for prev_page, prev_para in reversed(current_chunk):
-                        prev_tokens = self._count_tokens(prev_para)
+                    for prev_entry in reversed(current_chunk):
+                        prev_tokens = self._count_tokens(prev_entry[3])
                         if overlap_token_count + prev_tokens <= overlap_tokens:
-                            overlap_text.insert(0, (prev_page, prev_para))
+                            overlap_text.insert(0, prev_entry)
                             overlap_token_count += prev_tokens
                         else:
                             break
 
-                    current_chunk = overlap_text + [(page_number, para)]
+                    current_chunk = overlap_text + [(page_number, line_start, line_end, para)]
                     current_tokens = overlap_token_count + para_tokens
                 else:
-                    current_chunk = [(page_number, para)]
+                    current_chunk = [(page_number, line_start, line_end, para)]
                     current_tokens = para_tokens
 
         # Add final chunk
@@ -192,58 +201,98 @@ class Chunker:
         text = self._MULTI_SPACE_RE.sub(' ', text)
         return text
 
-    def _split_paragraphs(self, text: str) -> List[str]:
-        """Split text into paragraphs."""
-        # Split on double newlines or paragraph markers
-        paragraphs = re.split(r'\n\s*\n', text)
+    def _split_paragraphs_with_lines(self, text: str) -> List[Tuple[str, int, int]]:
+        """
+        Split page text into paragraphs, each tagged with the (first_line,
+        last_line) it spans within the page — 1-indexed over the page's
+        extracted lines, matching how PyMuPDF's text extraction lays them
+        out. A blank (or whitespace-only) line ends the current paragraph,
+        the same boundary `re.split(r'\\n\\s*\\n', ...)` used before, just
+        tracked line-by-line so the line range survives.
+        """
+        lines = text.split('\n')
+        paragraphs = []
+        current_lines: List[str] = []
+        start_line: Optional[int] = None
 
-        # Clean and filter
-        paragraphs = [p.strip() for p in paragraphs if p.strip()]
+        for i, line in enumerate(lines, 1):
+            if line.strip():
+                if start_line is None:
+                    start_line = i
+                current_lines.append(line)
+            elif current_lines:
+                paragraphs.append(('\n'.join(current_lines).strip(), start_line, i - 1))
+                current_lines = []
+                start_line = None
 
-        return paragraphs
+        if current_lines:
+            paragraphs.append(('\n'.join(current_lines).strip(), start_line, len(lines)))
 
-    def _split_oversized_text(self, text: str, token_count: int) -> List[str]:
-        """Split oversized text into smaller pieces."""
-        # Split into sentences
-        sentences = re.split(r'([.!?]+\s+)', text)
+        return [(p, s, e) for p, s, e in paragraphs if p]
 
-        chunks = []
-        current = []
+    def _split_oversized_text(self, text: str, token_count: int) -> List[Tuple[str, int, int]]:
+        """
+        Split oversized text into smaller pieces, each tagged with a
+        0-indexed (start_line, end_line) offset relative to the start of
+        `text` — the caller rebases these onto the parent paragraph's
+        absolute page line number. Without this, every sub-piece of a
+        multi-line oversized paragraph would fall back to the whole
+        paragraph's line range, defeating line-level citation precision for
+        exactly the paragraphs most likely to need splitting.
+        """
+        sentences = [s for s in re.split(r'([.!?]+\s+)', text) if s]
+
+        pieces: List[Tuple[str, int, int]] = []
+        current: List[str] = []
         current_tokens = 0
+        lines_consumed = 0  # newlines consumed across all prior sentences
+        current_start_line = 0
+
+        def flush():
+            if not current:
+                return
+            joined = "".join(current)
+            piece_text = joined.strip()
+            if piece_text:
+                pieces.append((piece_text, current_start_line, current_start_line + joined.count('\n')))
 
         for sentence in sentences:
-            if not sentence:
-                continue
-
             sent_tokens = self._count_tokens(sentence)
+            sent_lines = sentence.count('\n')
 
             # A single "sentence" can itself exceed max_chunk_size — most
             # often because there's no sentence-ending punctuation to split
             # on at all (e.g. a dense reference list or table dump), so the
-            # whole text comes back as one unsplit segment. Left alone, that
-            # produces one chunk too long for the embedding model's context
-            # window. Fall back to a token-bounded split for just that piece.
+            # whole text comes back as one unsplit segment. Fall back to a
+            # token-bounded split; its sub-pieces all inherit this one
+            # sentence's line span since we're already splitting on tokens
+            # rather than lines at that point.
             if sent_tokens > self.max_chunk_size:
-                if current:
-                    chunks.append("".join(current).strip())
-                    current = []
-                    current_tokens = 0
-                chunks.extend(self._split_by_tokens(sentence))
+                flush()
+                current = []
+                current_tokens = 0
+                sentence_start_line = lines_consumed
+                for sub_text in self._split_by_tokens(sentence):
+                    pieces.append((sub_text, sentence_start_line, sentence_start_line + sent_lines))
+                lines_consumed += sent_lines
+                current_start_line = lines_consumed
                 continue
 
             if current_tokens + sent_tokens <= self.max_chunk_size:
+                if not current:
+                    current_start_line = lines_consumed
                 current.append(sentence)
                 current_tokens += sent_tokens
             else:
-                if current:
-                    chunks.append("".join(current).strip())
+                flush()
+                current_start_line = lines_consumed
                 current = [sentence]
                 current_tokens = sent_tokens
 
-        if current:
-            chunks.append("".join(current).strip())
+            lines_consumed += sent_lines
 
-        return [c for c in chunks if c]
+        flush()
+        return pieces
 
     def _split_by_tokens(self, text: str) -> List[str]:
         """
@@ -269,15 +318,23 @@ class Chunker:
 
     def _create_chunk(
         self,
-        paragraphs: List[tuple],
+        paragraphs: List[Tuple[int, int, int, str]],
         doc_id: str,
         chunk_index: int,
         metadata: Dict[str, Any],
     ) -> Chunk:
-        """Create a Chunk object from a list of (page_number, text) paragraphs."""
-        text = "\n\n".join(para for _, para in paragraphs)
+        """Create a Chunk from (page_number, line_start, line_end, text) paragraphs."""
+        text = "\n\n".join(para for _, _, _, para in paragraphs)
         token_count = self._count_tokens(text)
-        page_numbers = sorted(set(page for page, _ in paragraphs))
+        page_numbers = sorted(set(page for page, _, _, _ in paragraphs))
+
+        line_ranges: Dict[int, Tuple[int, int]] = {}
+        for page, line_start, line_end, _ in paragraphs:
+            if page in line_ranges:
+                prev_start, prev_end = line_ranges[page]
+                line_ranges[page] = (min(prev_start, line_start), max(prev_end, line_end))
+            else:
+                line_ranges[page] = (line_start, line_end)
 
         return Chunk(
             text=text,
@@ -289,6 +346,7 @@ class Chunker:
             char_start=0,  # Could be calculated if needed
             char_end=len(text),
             metadata=metadata,
+            line_ranges=line_ranges,
         )
 
     def _count_tokens(self, text: str) -> int:

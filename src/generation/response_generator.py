@@ -1,5 +1,6 @@
 """Complete RAG response generation."""
 
+import re
 from typing import Dict, Any, Optional
 from dataclasses import dataclass
 from loguru import logger
@@ -7,6 +8,7 @@ from loguru import logger
 from src.retrieval.retrieval_pipeline import RetrievalPipeline, RetrievalResult
 from src.generation.ollama_client import OllamaClient
 from src.generation.prompt_templates import SYSTEM_PROMPT, build_rag_prompt
+from src.utils.citations import format_page_citation
 
 
 @dataclass
@@ -86,10 +88,17 @@ class ResponseGenerator:
             system_prompt=SYSTEM_PROMPT,
         )
 
-        # Step 4: Format sources
+        # Step 4: Format sources — only the ones the answer actually cites,
+        # not every chunk that was fed to the LLM as context. Most retrieved
+        # chunks end up unused for any given question, so listing all of
+        # them under "Sources:" looks like a citation list but isn't one.
+        # Original [n] numbering is preserved so it still matches the
+        # citations the LLM wrote inline in the answer.
+        cited_indices = self._extract_cited_indices(answer)
         sources, formatted_sources = self._format_sources(
             retrieval_result.chunks,
             retrieval_result.citation_map,
+            only_indices=cited_indices,
         )
 
         # Step 5: Build metadata
@@ -112,10 +121,28 @@ class ResponseGenerator:
         self.logger.info("Response generation complete")
         return response
 
+    def _extract_cited_indices(self, answer: str) -> set:
+        """
+        Find which [n] citation markers the answer's prose actually cites.
+
+        The prompt asks the model to end with its own "Sources:" recap, and
+        it sometimes lists every candidate there — including ones it
+        annotates as "(not used in this answer)". Scanning past that
+        heading would count those as cited too, so only the text before it
+        is considered.
+        """
+        body = re.split(r'\n\s*Sources:', answer, maxsplit=1, flags=re.IGNORECASE)[0]
+        # Matches both "[1]" and multi-citation brackets like "[1, 5]".
+        indices = set()
+        for group in re.findall(r'\[([\d,\s]+)\]', body):
+            indices.update(int(n) for n in re.findall(r'\d+', group))
+        return indices
+
     def _format_sources(
         self,
         chunks: list,
         citation_map: Dict[str, Any],
+        only_indices: Optional[set] = None,
     ) -> tuple:
         """
         Format sources for display.
@@ -123,6 +150,11 @@ class ResponseGenerator:
         Args:
             chunks: Retrieved chunks
             citation_map: Citation mapping
+            only_indices: If given, only include chunks whose 1-based
+                position is in this set (i.e. the ones actually cited in the
+                answer). Numbering is kept as the original [n] so it still
+                matches what the answer references. Falls back to all
+                chunks if empty/None (e.g. the model cited nothing).
 
         Returns:
             Tuple of (sources_list, formatted_string)
@@ -131,17 +163,12 @@ class ResponseGenerator:
         formatted_lines = ["Sources:"]
 
         for i, chunk in enumerate(chunks, 1):
+            if only_indices and i not in only_indices:
+                continue
+
             doc_id = chunk.get("doc_id", "Unknown")
             page_numbers = chunk.get("page_numbers", [])
-
-            # Format page numbers
-            if page_numbers:
-                if len(page_numbers) == 1:
-                    page_str = f"Page {page_numbers[0]}"
-                else:
-                    page_str = f"Pages {page_numbers[0]}-{page_numbers[-1]}"
-            else:
-                page_str = "Page Unknown"
+            page_str = format_page_citation(page_numbers, chunk.get("line_ranges"))
 
             # Extract section title if available
             section = chunk.get("section_title", "")

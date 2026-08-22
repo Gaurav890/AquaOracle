@@ -40,6 +40,19 @@ def test_add_chunk_updates_document_chunk_count(store):
     assert store.get_document("doc1")["chunk_count"] == 2
 
 
+def test_chunk_line_ranges_round_trip(store):
+    store.add_document("doc1", {"file_name": "doc1.pdf", "file_path": "/p", "page_count": 1})
+
+    store.add_chunk("doc1_chunk_0", "doc1", {
+        "chunk_index": 0, "text": "hello", "page_numbers": [3],
+        "line_ranges": {3: (12, 18)},
+    })
+
+    chunk = store.get_chunk("doc1_chunk_0")
+
+    assert chunk["line_ranges"] == {"3": [12, 18]}  # JSON round-trip: int keys/tuples -> str/list
+
+
 def test_add_table_and_get_tables(store):
     """Regression test: table extraction results used to be discarded —
     only a count was stored, never the table content."""

@@ -103,6 +103,59 @@ def test_toc_dot_leaders_are_stripped_before_chunking():
     assert "ADA Accessibility" in combined_text
 
 
+def test_line_ranges_are_tight_for_a_single_page_chunk():
+    chunker = Chunker(max_chunk_size=1024, min_chunk_size=1, overlap=0.0)
+    pages = [(4, "Line one of the paragraph.\nLine two continues here.\nLine three ends it.")]
+
+    chunks = chunker.chunk_document(pages=pages, doc_id="doc1", metadata={})
+
+    assert len(chunks) == 1
+    assert chunks[0].line_ranges == {4: (1, 3)}
+
+
+def test_line_ranges_track_separate_paragraphs_on_one_page():
+    # Small max_chunk_size forces each ~10-token paragraph into its own chunk.
+    chunker = Chunker(max_chunk_size=15, min_chunk_size=1, overlap=0.0)
+    page_text = "First short paragraph line.\n\nSecond short paragraph line.\n\nThird short paragraph line."
+    pages = [(1, page_text)]
+
+    chunks = chunker.chunk_document(pages=pages, doc_id="doc1", metadata={})
+
+    ranges = [c.line_ranges[1] for c in chunks]
+    assert ranges == sorted(ranges)  # line ranges advance monotonically
+    assert len(set(ranges)) == len(ranges)  # no two chunks share the same range
+
+
+def test_line_ranges_stay_tight_when_a_paragraph_is_split_as_oversized():
+    """Regression test: splitting an oversized paragraph used to give every
+    resulting sub-chunk the SAME line range as the whole parent paragraph
+    (e.g. lines 1-78 for all of them), which defeats line-level citation
+    precision for exactly the paragraphs big enough to need splitting.
+    """
+    chunker = Chunker(max_chunk_size=15, min_chunk_size=1, overlap=0.0)
+    sentences = [f"This is sentence number {i} in a long paragraph." for i in range(20)]
+    long_paragraph = "\n".join(sentences)  # one paragraph, no blank lines inside
+    pages = [(2, long_paragraph)]
+
+    chunks = chunker.chunk_document(pages=pages, doc_id="doc1", metadata={})
+
+    assert len(chunks) > 1
+    ranges = [c.line_ranges[2] for c in chunks]
+    assert len(set(ranges)) > 1, "all sub-chunks got the same line range"
+    full_span = ranges[0][0], ranges[-1][1]
+    assert any(r != full_span for r in ranges), "every sub-chunk still spans the whole paragraph"
+
+
+def test_line_ranges_have_separate_entries_per_page_for_a_cross_page_chunk():
+    chunker = Chunker(max_chunk_size=1024, min_chunk_size=1, overlap=0.0)
+    pages = [(1, "Short page one text."), (2, "Short page two text.")]
+
+    chunks = chunker.chunk_document(pages=pages, doc_id="doc1", metadata={})
+
+    assert len(chunks) == 1
+    assert chunks[0].line_ranges == {1: (1, 1), 2: (1, 1)}
+
+
 def test_chunk_index_increments_in_order():
     chunker = Chunker(max_chunk_size=5, min_chunk_size=1, overlap=0.0)
     pages = [(1, "alpha beta gamma.\n\ndelta epsilon zeta.\n\neta theta iota.")]

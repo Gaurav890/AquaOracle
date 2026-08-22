@@ -10,16 +10,17 @@
 
 The RAG platform core functionality is **fully operational** with Docker support. The system has been tested end-to-end with:
 - 17 PDFs ingested (~56 MB)
-- 1,889 chunks indexed, each with correct per-chunk page numbers and 100% embedded
+- 6,138 chunks indexed, each with correct per-chunk page **and line** numbers, 100% embedded
 - 461 tables and 1,046 figures extracted and persisted (queryable via `MetadataStore.get_tables`/`get_figures`, though not yet part of vector search)
-- Full query pipeline verified working, with citations that point to the specific document and page a chunk came from
+- Full query pipeline verified working, with citations that point to the specific page **and line range** a chunk came from, and that list only the sources an answer actually cites
 
-**2026-08-22 fixes (two rounds)**:
+**2026-08-22 fixes (four rounds)**:
 1. Found and fixed two correctness bugs that had gone unnoticed — vector IDs collided across documents, so search only ever returned results from one of the 17 PDFs, and every chunk was tagged with its entire document's page range instead of its real page.
-2. Wired up the previously-decorative `config/*.yaml` files, persisted extracted table/figure content (previously discarded), switched embedding to real batched Ollama calls with honest failure handling instead of silent zero-vectors, and added a unit test suite. Re-ingesting under the new failure handling surfaced a genuine, previously-invisible issue: ~1% of chunks exceeded the embedding model's context length and were being silently stored as zero-vectors.
-3. Root-caused that issue: it was table-of-contents pages full of dot leaders (`....................`) and repeated non-breaking spaces, which tokenize far less efficiently under `nomic-embed-text`'s tokenizer than under the chunker's size estimate. Added a text-cleaning step that strips this layout noise before chunking. Every chunk now embeds successfully (1,889 chunks, 1,889 vectors).
+2. Wired up the previously-decorative `config/*.yaml` files, persisted extracted table/figure content (previously discarded), switched embedding to real batched Ollama calls with honest failure handling instead of silent zero-vectors, and added a unit test suite.
+3. Root-caused a batch of embedding failures that round 2's honest-failure handling surfaced: table-of-contents pages full of dot leaders (`....................`) and repeated non-breaking spaces tokenize far less efficiently under `nomic-embed-text`'s tokenizer than under the chunker's size estimate. Added a text-cleaning step that strips this layout noise before chunking.
+4. Added line-level citations: chunk size dropped from 1024 to ~300 tokens (so a line range stays tight rather than spanning most of a page), the chunker now tracks each chunk's real line range per page, and retrieval's `top_k`/`top_n` defaults were raised (100/25) to keep the same total context per answer despite smaller chunks. Also fixed the CLI's "Sources:" list, which used to print every retrieved chunk regardless of whether the answer cited it — it was even missing citations formatted as `[1, 5]` (comma-grouped) — so it now correctly shows only what was actually used.
 
-See `git log` for details across all three rounds.
+See `git log` for details across all four rounds.
 
 ---
 
@@ -35,7 +36,7 @@ make status             # View statistics
 
 ### Current Data
 - **Documents Indexed**: 17 PDFs
-- **Chunks**: 1,889, all embedded and searchable (0 failures)
+- **Chunks**: 6,138 (~300 tokens each, for tight line-level citations), all embedded and searchable (0 failures)
 - **Tables**: 461 (persisted, queryable by document)
 - **Figures**: 1,046 (persisted, queryable by document)
 - **Vector Store**: Qdrant (embedded)
@@ -64,7 +65,7 @@ make status             # View statistics
 **Results**:
 - All 17 PDFs successfully parsed
 - Text, tables, and figures are extracted and persisted per document (tables/figures are queryable by document, not yet part of semantic search)
-- 1,889 chunks generated, each tagged with its real source page(s); all embed successfully
+- 6,138 chunks generated, each tagged with its real source page(s) and line range; all embed successfully
 
 ### ✅ Phase 3: Embedding & Vector Storage (100%)
 - [x] Ollama embedder (nomic-embed-text, 768-dim)
@@ -187,7 +188,7 @@ make clean
 | Vector Search | ✅ Working | Qdrant HNSW |
 | Re-ranking | ✅ Working | Cross-encoder MiniLLM |
 | LLM Generation | ✅ Working | llama3.1:8b |
-| Source Citations | ✅ Working | Document + page numbers |
+| Source Citations | ✅ Working | Document + page + line range; only actually-cited sources shown |
 | CLI Interface | ✅ Working | All commands functional |
 | Docker Support | ✅ Working | Full containerization |
 
@@ -212,9 +213,9 @@ make clean
 | Ingestion Time | ~4-5 minutes measured on the author's machine (one-time; hardware-dependent) |
 | Query Latency | ~20-30 seconds per query, mostly LLM generation time |
 | Memory Usage | 4-6 GB RAM |
-| Disk Usage | ~2 GB (indices + data) |
-| Vector Store Size | ~500 MB |
-| Metadata DB Size | 9.4 MB |
+| Disk Usage | ~70 MB (indices + data, excluding Ollama models) |
+| Vector Store Size | 54 MB |
+| Metadata DB Size | 13 MB |
 
 Note: each `rag query` is a fresh CLI process — it reconnects to Ollama and reloads the re-ranker model every time, so there's no "warm" second query the way a long-running server would have.
 

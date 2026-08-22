@@ -72,6 +72,7 @@ class VectorRetriever:
                 "text": result.text,
                 "score": result.score,
                 "page_numbers": result.page_numbers,
+                "line_ranges": result.metadata.get("line_ranges", {}),
                 "metadata": result.metadata,
             })
 

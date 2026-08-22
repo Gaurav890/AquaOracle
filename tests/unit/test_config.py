@@ -28,16 +28,16 @@ def test_load_model_config_reads_real_yaml():
 def test_load_retrieval_config_reads_real_yaml():
     config = load_retrieval_config()
 
-    assert config.vector_top_k == 50
-    assert config.rerank_top_n == 10
+    assert config.vector_top_k == 100
+    assert config.rerank_top_n == 25
     assert config.max_context_tokens == 8192
 
 
 def test_load_chunking_config_reads_real_yaml():
     config = load_chunking_config()
 
-    assert config.max_chunk_size == 1024
-    assert config.min_chunk_size == 128
+    assert config.max_chunk_size == 300
+    assert config.min_chunk_size == 40
     assert config.overlap == 0.2
 
 
@@ -49,8 +49,8 @@ def test_loaders_fall_back_to_defaults_when_yaml_missing(tmp_path):
     chunking_config = load_chunking_config(empty_dir)
 
     assert model_config.embed_model == "nomic-embed-text"
-    assert retrieval_config.vector_top_k == 50
-    assert chunking_config.max_chunk_size == 1024
+    assert retrieval_config.vector_top_k == 100
+    assert chunking_config.max_chunk_size == 300
 
 
 def test_load_retrieval_config_respects_custom_yaml(tmp_path):

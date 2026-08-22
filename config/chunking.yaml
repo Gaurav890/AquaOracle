@@ -7,17 +7,20 @@ semantic_chunking:
     - "paragraph"
     - "section"
     - "sentence"
-  min_chunk_size: 128  # tokens
-  max_chunk_size: 1024  # tokens
+  min_chunk_size: 40  # tokens
+  max_chunk_size: 300  # tokens — small enough that a chunk's line range is
+                        # a handful of lines, not most of a page (see
+                        # citations: line-level precision needs chunks this
+                        # size; 1024 tokens routinely spans 40+ lines)
 
 sliding_window:
-  chunk_size: 1024  # tokens
+  chunk_size: 300  # tokens
   overlap: 0.2  # 20% overlap
 
 hybrid:
   primary: "semantic"
   fallback: "sliding_window"
-  max_chunk_size: 1024
+  max_chunk_size: 300
   overlap: 0.2
 
 special_handling:

@@ -37,13 +37,13 @@ class RetrievalConfig(BaseSettings):
     """Retrieval pipeline configuration."""
 
     # Stage 1: Vector Search
-    vector_top_k: int = 50
+    vector_top_k: int = 100
     vector_distance_metric: str = "cosine"
     vector_ef_search: int = 128
 
     # Stage 2: Reranking
     rerank_enabled: bool = True
-    rerank_top_n: int = 10
+    rerank_top_n: int = 25
     rerank_score_threshold: float = 0.3
 
     # Stage 3: Graph Expansion
@@ -66,8 +66,8 @@ class ChunkingConfig(BaseSettings):
     """Chunking strategy configuration."""
 
     strategy: str = "hybrid"
-    min_chunk_size: int = 128
-    max_chunk_size: int = 1024
+    min_chunk_size: int = 40
+    max_chunk_size: int = 300
     overlap: float = 0.2
 
     # Special handling
@@ -195,11 +195,11 @@ def load_retrieval_config(config_dir: Optional[Path] = None) -> RetrievalConfig:
         stage3 = data.get("stage3_graph_expansion", {})
         stage4 = data.get("stage4_context_assembly", {})
         return RetrievalConfig(
-            vector_top_k=stage1.get("top_k", 50),
+            vector_top_k=stage1.get("top_k", 100),
             vector_distance_metric=stage1.get("distance_metric", "cosine"),
             vector_ef_search=stage1.get("ef_search", 128),
             rerank_enabled=stage2.get("enabled", True),
-            rerank_top_n=stage2.get("top_n", 10),
+            rerank_top_n=stage2.get("top_n", 25),
             rerank_score_threshold=stage2.get("score_threshold", 0.3),
             graph_expansion_enabled=stage3.get("enabled", False),
             graph_max_hops=stage3.get("max_hops", 1),
@@ -226,8 +226,8 @@ def load_chunking_config(config_dir: Optional[Path] = None) -> ChunkingConfig:
         meta = data.get("metadata", {})
         return ChunkingConfig(
             strategy=data.get("strategy", "hybrid"),
-            min_chunk_size=semantic.get("min_chunk_size", 128),
-            max_chunk_size=hybrid.get("max_chunk_size", 1024),
+            min_chunk_size=semantic.get("min_chunk_size", 40),
+            max_chunk_size=hybrid.get("max_chunk_size", 300),
             overlap=hybrid.get("overlap", 0.2),
             preserve_tables=special.get("preserve_tables", True),
             preserve_lists=special.get("preserve_lists", True),

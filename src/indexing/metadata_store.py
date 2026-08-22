@@ -63,6 +63,7 @@ class MetadataStore:
                     text TEXT NOT NULL,
                     token_count INTEGER,
                     page_numbers TEXT,
+                    line_ranges_json TEXT,
                     section_title TEXT,
                     char_start INTEGER,
                     char_end INTEGER,
@@ -71,6 +72,12 @@ class MetadataStore:
                     FOREIGN KEY(doc_id) REFERENCES documents(doc_id)
                 )
             """)
+
+            # Migrate DBs created before line_ranges_json existed.
+            try:
+                cursor.execute("ALTER TABLE chunks ADD COLUMN line_ranges_json TEXT")
+            except sqlite3.OperationalError:
+                pass  # column already exists
 
             # Tables table
             cursor.execute("""
@@ -149,13 +156,14 @@ class MetadataStore:
                 cursor = conn.cursor()
 
                 page_numbers_str = json.dumps(chunk_data.get("page_numbers", []))
+                line_ranges_str = json.dumps(chunk_data.get("line_ranges", {}))
 
                 cursor.execute("""
                     INSERT OR REPLACE INTO chunks (
                         chunk_id, doc_id, chunk_index, text, token_count,
-                        page_numbers, section_title, char_start, char_end,
-                        metadata_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        page_numbers, line_ranges_json, section_title,
+                        char_start, char_end, metadata_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     chunk_id,
                     doc_id,
@@ -163,6 +171,7 @@ class MetadataStore:
                     chunk_data.get("text", ""),
                     chunk_data.get("token_count", 0),
                     page_numbers_str,
+                    line_ranges_str,
                     chunk_data.get("section_title"),
                     chunk_data.get("char_start", 0),
                     chunk_data.get("char_end", 0),
@@ -214,6 +223,7 @@ class MetadataStore:
                 if row:
                     data = dict(row)
                     data["page_numbers"] = json.loads(data.get("page_numbers", "[]"))
+                    data["line_ranges"] = json.loads(data.get("line_ranges_json") or "{}")
                     data["metadata"] = json.loads(data.get("metadata_json", "{}"))
                     return data
 
