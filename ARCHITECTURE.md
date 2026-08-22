@@ -155,6 +155,8 @@ PDF File → PDFParser → PDFDocument
 - `idx_documents_org` on documents(organization)
 - `idx_documents_year` on documents(year)
 
+**Current gap**: the `tables` and `figures` tables above exist in the schema, but nothing writes to them yet — `TableExtractor`/`FigureExtractor` produce real data during ingestion, only the counts make it into `documents.table_count`/`figure_count`. Treat table and figure content as not yet queryable.
+
 ### 4. Retrieval Pipeline
 
 **Purpose**: Multi-stage retrieval for high-quality results
@@ -336,6 +338,8 @@ LOG_FILE=logs/rag.log
 **retrieval.yaml**: Retrieval pipeline settings
 **chunking.yaml**: Chunking strategies
 
+**Current gap**: these files, plus the `VECTOR_TOP_K`/`RERANK_TOP_N`/`MAX_CONTEXT_TOKENS` env vars, aren't loaded by the running code — `ModelConfig`/`RetrievalConfig`/`ChunkingConfig` and `load_model_config()` exist in `src/core/config.py` but are never called. Every pipeline parameter is hardcoded directly in the CLI commands (`src/cli/commands/*.py`). Editing these YAML files currently has no effect; use `rag query --top-k`/`--top-n` to change retrieval size instead.
+
 ## Data Flow
 
 ### Ingestion
@@ -374,13 +378,9 @@ User Response
 
 ## Performance Characteristics
 
-### Current Scale (18 PDFs, ~56 MB)
-- **Ingestion**: ~60 minutes (one-time)
-- **Query Latency**:
-  - Vector search: ~100ms
-  - Re-ranking: ~200ms
-  - LLM generation: ~2s
-  - Total: ~3s (p95)
+### Current Scale (17 PDFs, ~56 MB)
+- **Ingestion**: ~4-5 minutes measured on the author's machine (one-time; hardware-dependent)
+- **Query Latency**: ~20-30 seconds end-to-end, dominated by `llama3.1:8b` generation time. Since each `rag query` is its own CLI process, it also re-tests the Ollama connection and reloads the re-ranker model every time — there's no persistent "warm" state between queries.
 - **Memory**: ~4 GB RAM
 - **Disk**: ~500 MB (indices + metadata)
 

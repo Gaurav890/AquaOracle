@@ -211,15 +211,12 @@ OLLAMA_HOST=http://localhost:11434
 OLLAMA_LLM_MODEL=llama3.1:8b
 OLLAMA_EMBED_MODEL=nomic-embed-text
 
-# Retrieval Parameters
-VECTOR_TOP_K=50
-RERANK_TOP_N=10
-MAX_CONTEXT_TOKENS=8192
-
 # Logging
 LOG_LEVEL=INFO
 LOG_FILE=logs/rag.log
 ```
+
+Note: `OLLAMA_*` and the logging vars above are the ones the app actually reads. `VECTOR_TOP_K`, `RERANK_TOP_N`, and `MAX_CONTEXT_TOKENS` aren't wired up yet — setting them in `.env` has no effect. To change retrieval size per query, use `rag query --top-k 100 --top-n 20` instead.
 
 ### Model Configuration
 
@@ -244,6 +241,8 @@ reranker:
   enabled: true
 ```
 
+Note: this file isn't loaded by the app yet — the model names above are hardcoded in `src/cli/commands/*.py` instead. Editing `models.yaml` currently has no effect.
+
 ### Retrieval Configuration
 
 Edit `config/retrieval.yaml`:
@@ -266,6 +265,8 @@ stage4_context_assembly:
   max_context_tokens: 8192
   sort_by: ["relevance", "document", "page"]
 ```
+
+Note: same as above — this file isn't loaded yet either, and graph expansion (stage 3) isn't implemented regardless of what `enabled` says here. Use `rag query --top-k`/`--top-n` to adjust retrieval size.
 
 ---
 
@@ -292,6 +293,9 @@ make clean
 
 # Rebuild from scratch
 make ingest
+
+# Or, without leaving Docker/Poetry, clear and re-ingest in one step:
+rag ingest soc/ --rebuild
 ```
 
 ### Want to See What's Happening
@@ -340,9 +344,8 @@ If you encounter memory issues:
 
 ### Current Scale (17 PDFs, ~56 MB)
 
-- **Ingestion**: ~30 minutes (one-time)
-- **Query Latency**: 2-3 seconds (after first query)
-- **First Query**: ~10 seconds (model loading)
+- **Ingestion**: ~4-5 minutes measured on the author's machine (one-time; hardware-dependent)
+- **Query Latency**: ~20-30 seconds per query, mostly `llama3.1:8b` generation time. Each `rag query` is its own process, so there's no persistent "warm" state — every query pays the same startup cost.
 - **Memory Usage**: ~4-6 GB RAM
 - **Disk Usage**: ~2 GB (indices + models)
 

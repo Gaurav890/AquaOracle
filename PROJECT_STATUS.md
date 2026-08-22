@@ -1,19 +1,20 @@
 # RAG Platform - Project Status
 
-**Last Updated**: January 29, 2026
-**Version**: 0.8.0 (MVP Ready)
+**Last Updated**: August 22, 2026
+**Version**: 0.8.1 (MVP Ready)
 **Implementation**: ~80% Complete
 
 ---
 
 ## Current Status: MVP Ready ✅
 
-The RAG platform core functionality is **fully operational** with Docker support. The system has been successfully tested with:
+The RAG platform core functionality is **fully operational** with Docker support. The system has been tested end-to-end with:
 - 17 PDFs ingested (~56 MB)
-- ~2000 chunks indexed
-- 300+ tables extracted
-- 800+ figures extracted
-- Full query pipeline working with source citations
+- 1,903 chunks indexed, each with correct per-chunk page numbers
+- Tables and figures are detected and counted during ingestion, but not yet persisted for retrieval (see Known Limitations)
+- Full query pipeline verified working, with citations that point to the specific document and page a chunk came from
+
+**2026-08-22 fixes**: A review of the pipeline found and fixed two correctness bugs that had gone unnoticed — vector IDs collided across documents, so search only ever returned results from one of the 17 PDFs, and every chunk was tagged with its entire document's page range instead of its real page. Both are fixed and the index has been rebuilt; see `git log` for details.
 
 ---
 
@@ -57,8 +58,8 @@ make status             # View statistics
 
 **Results**:
 - All 17 PDFs successfully parsed
-- Text, tables, and figures extracted
-- ~2000 chunks generated
+- Text, tables, and figures are extracted per document, but table/figure content is only counted, not stored — it isn't searchable yet
+- 1,903 chunks generated, each tagged with its real source page(s)
 
 ### ✅ Phase 3: Embedding & Vector Storage (100%)
 - [x] Ollama embedder (nomic-embed-text, 768-dim)
@@ -68,8 +69,8 @@ make status             # View statistics
 - [x] Metadata filtering
 
 **Results**:
-- All chunks embedded
-- Fast vector search working
+- All chunks embedded and stored with collision-safe vector IDs (a bug that let one document's chunks silently overwrite another's was found and fixed on 2026-08-22)
+- Fast vector search working, confirmed returning results across all 17 documents
 - Metadata filtering operational
 
 ### ⏳ Phase 4: Semantic Page Graph (0%)
@@ -203,13 +204,14 @@ make clean
 
 | Metric | Value |
 |--------|-------|
-| Ingestion Time | ~30 minutes (one-time) |
-| First Query | ~10 seconds (model loading) |
-| Subsequent Queries | 2-3 seconds |
+| Ingestion Time | ~4-5 minutes measured on the author's machine (one-time; hardware-dependent) |
+| Query Latency | ~20-30 seconds per query, mostly LLM generation time |
 | Memory Usage | 4-6 GB RAM |
 | Disk Usage | ~2 GB (indices + data) |
 | Vector Store Size | ~500 MB |
 | Metadata DB Size | 9.4 MB |
+
+Note: each `rag query` is a fresh CLI process — it reconnects to Ollama and reloads the re-ranker model every time, so there's no "warm" second query the way a long-running server would have.
 
 ### Quality Metrics
 - **Retrieval**: High-quality results with re-ranking
@@ -268,6 +270,10 @@ LLM Generation → Answer + Citations
 2. **No Web Interface**: CLI and Docker only (API/Web UI planned)
 3. **Single Document Type**: PDFs only (extensible to other formats)
 4. **English Only**: LLM and embedding models are English-focused
+5. **Config files aren't wired up yet**: `config/models.yaml`, `config/retrieval.yaml`, and `config/chunking.yaml`, along with the `VECTOR_TOP_K` / `RERANK_TOP_N` / `MAX_CONTEXT_TOKENS` env vars, are not read by the running code. Every pipeline parameter is currently hardcoded in the CLI commands; use `rag query --top-k`/`--top-n` to change retrieval size for now.
+6. **No automated tests**: `pytest` is configured with coverage reporting, but `tests/` is empty.
+7. **Single-writer index**: Qdrant's embedded mode locks its storage folder, so `rag ingest` and `rag query` can't run against the same `data/vector_store` at the same time.
+8. **Table/figure content not searchable**: extraction runs and produces per-document counts, but the actual table and figure data isn't persisted anywhere queries can reach.
 
 ### Not Blockers
 - Graph retrieval: Current 2-stage pipeline works well
