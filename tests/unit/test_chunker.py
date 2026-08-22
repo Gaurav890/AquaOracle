@@ -62,6 +62,47 @@ def test_chunk_spanning_a_page_boundary_lists_both_pages():
     assert chunks[0].page_numbers == [1, 2]
 
 
+def test_punctuation_free_oversized_text_is_still_split():
+    """Regression test: a paragraph with no sentence-ending punctuation used
+    to come back as a single unsplit blob from the sentence-based splitter,
+    producing a chunk too long for the embedding model's context window
+    (this caused real "input length exceeds context length" failures during
+    ingestion). Every resulting chunk must now respect max_chunk_size.
+    """
+    chunker = Chunker(max_chunk_size=50, min_chunk_size=1, overlap=0.0)
+    huge_no_punctuation = " ".join(f"word{i}" for i in range(500))
+    pages = [(7, huge_no_punctuation)]
+
+    chunks = chunker.chunk_document(pages=pages, doc_id="doc1", metadata={})
+
+    assert len(chunks) > 1
+    assert all(chunk.token_count <= 50 for chunk in chunks)
+    assert all(chunk.page_numbers == [7] for chunk in chunks)
+
+
+def test_toc_dot_leaders_are_stripped_before_chunking():
+    """Regression test: table-of-contents pages full of dot leaders
+    ("Section 4.1 .......................... 42") and repeated non-breaking
+    spaces tokenize far less efficiently under the embedding model's own
+    tokenizer than under the chunker's tiktoken-based size estimate. A real
+    document page like this produced chunks tiktoken measured as ~700
+    tokens (within budget) that nomic-embed-text rejected as exceeding its
+    context length. Stripping the noise should sharply shrink the text.
+    """
+    chunker = Chunker(max_chunk_size=1024, min_chunk_size=1, overlap=0.0)
+    toc_page = (
+        "4.5.5.5 \xa0ADA Accessibility " + "." * 60 + " 64\xa0\xa0\xa0\xa0\n"
+        "4.5.5.7 \xa0Dimensions " + "." * 60 + " 64\xa0\xa0\xa0\xa0\n"
+    )
+
+    chunks = chunker.chunk_document(pages=[(9, toc_page)], doc_id="doc1", metadata={})
+
+    combined_text = " ".join(c.text for c in chunks)
+    assert "." * 10 not in combined_text
+    assert "\xa0\xa0\xa0" not in combined_text
+    assert "ADA Accessibility" in combined_text
+
+
 def test_chunk_index_increments_in_order():
     chunker = Chunker(max_chunk_size=5, min_chunk_size=1, overlap=0.0)
     pages = [(1, "alpha beta gamma.\n\ndelta epsilon zeta.\n\neta theta iota.")]

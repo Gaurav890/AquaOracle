@@ -82,6 +82,7 @@ class Chunker:
         # page number instead of being tagged with the whole document's range.
         paragraphs = []  # List[(page_number, text)]
         for page_number, page_text in pages:
+            page_text = self._strip_layout_noise(page_text)
             for para in self._split_paragraphs(page_text):
                 paragraphs.append((page_number, para))
 
@@ -171,6 +172,26 @@ class Chunker:
         self.logger.info(f"Created {len(chunks)} chunks for document {doc_id}")
         return chunks
 
+    _LAYOUT_NOISE_RE = re.compile(r'[.\xa0]{4,}')
+    _MULTI_SPACE_RE = re.compile(r'[ \t]{2,}')
+
+    def _strip_layout_noise(self, text: str) -> str:
+        """
+        Collapse PDF layout artifacts that carry no semantic content but can
+        make a chunk far longer, in tokens, than its character count
+        suggests — most commonly table-of-contents dot leaders
+        ("Section 4.1 .......................... 42") and runs of repeated
+        non-breaking spaces used for alignment. A real 1024-cl100k-token
+        chunk of prose fits comfortably in nomic-embed-text's context
+        window, but a dot-leader-heavy TOC page of the same cl100k length
+        tokenizes far less efficiently under nomic's own tokenizer and can
+        exceed it — this was the actual cause of a batch of chunks failing
+        to embed with "input length exceeds the context length".
+        """
+        text = self._LAYOUT_NOISE_RE.sub(' ', text)
+        text = self._MULTI_SPACE_RE.sub(' ', text)
+        return text
+
     def _split_paragraphs(self, text: str) -> List[str]:
         """Split text into paragraphs."""
         # Split on double newlines or paragraph markers
@@ -191,7 +212,24 @@ class Chunker:
         current_tokens = 0
 
         for sentence in sentences:
+            if not sentence:
+                continue
+
             sent_tokens = self._count_tokens(sentence)
+
+            # A single "sentence" can itself exceed max_chunk_size — most
+            # often because there's no sentence-ending punctuation to split
+            # on at all (e.g. a dense reference list or table dump), so the
+            # whole text comes back as one unsplit segment. Left alone, that
+            # produces one chunk too long for the embedding model's context
+            # window. Fall back to a token-bounded split for just that piece.
+            if sent_tokens > self.max_chunk_size:
+                if current:
+                    chunks.append("".join(current).strip())
+                    current = []
+                    current_tokens = 0
+                chunks.extend(self._split_by_tokens(sentence))
+                continue
 
             if current_tokens + sent_tokens <= self.max_chunk_size:
                 current.append(sentence)
@@ -205,7 +243,29 @@ class Chunker:
         if current:
             chunks.append("".join(current).strip())
 
-        return chunks
+        return [c for c in chunks if c]
+
+    def _split_by_tokens(self, text: str) -> List[str]:
+        """
+        Last-resort splitter for a single segment that has no punctuation to
+        break on. Slices the raw token stream so every piece is guaranteed to
+        fit max_chunk_size, unlike splitting on whitespace (a single very
+        long "word" could still exceed the limit).
+        """
+        if self.tokenizer:
+            try:
+                tokens = self.tokenizer.encode(text)
+                return [
+                    self.tokenizer.decode(tokens[i:i + self.max_chunk_size]).strip()
+                    for i in range(0, len(tokens), self.max_chunk_size)
+                ]
+            except Exception:
+                self.logger.warning("Tokenizer failed during oversized-text split; using character estimate")
+
+        # Fallback: character-based estimate (~4 chars/token), matching the
+        # heuristic _count_tokens uses when no tokenizer is available.
+        max_chars = self.max_chunk_size * 4
+        return [text[i:i + max_chars].strip() for i in range(0, len(text), max_chars)]
 
     def _create_chunk(
         self,

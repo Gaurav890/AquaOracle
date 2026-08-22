@@ -10,15 +10,16 @@
 
 The RAG platform core functionality is **fully operational** with Docker support. The system has been tested end-to-end with:
 - 17 PDFs ingested (~56 MB)
-- 1,903 chunks indexed, each with correct per-chunk page numbers
+- 1,889 chunks indexed, each with correct per-chunk page numbers and 100% embedded
 - 461 tables and 1,046 figures extracted and persisted (queryable via `MetadataStore.get_tables`/`get_figures`, though not yet part of vector search)
 - Full query pipeline verified working, with citations that point to the specific document and page a chunk came from
 
 **2026-08-22 fixes (two rounds)**:
 1. Found and fixed two correctness bugs that had gone unnoticed — vector IDs collided across documents, so search only ever returned results from one of the 17 PDFs, and every chunk was tagged with its entire document's page range instead of its real page.
-2. Wired up the previously-decorative `config/*.yaml` files, persisted extracted table/figure content (previously discarded), switched embedding to real batched Ollama calls with honest failure handling instead of silent zero-vectors, and added a 41-test unit suite. Re-ingesting under the new failure handling also surfaced a genuine, previously-invisible issue: ~1% of chunks (18 of 1,903) exceed the embedding model's context length and are now cleanly skipped with a warning instead of being silently stored as zero-vectors.
+2. Wired up the previously-decorative `config/*.yaml` files, persisted extracted table/figure content (previously discarded), switched embedding to real batched Ollama calls with honest failure handling instead of silent zero-vectors, and added a unit test suite. Re-ingesting under the new failure handling surfaced a genuine, previously-invisible issue: ~1% of chunks exceeded the embedding model's context length and were being silently stored as zero-vectors.
+3. Root-caused that issue: it was table-of-contents pages full of dot leaders (`....................`) and repeated non-breaking spaces, which tokenize far less efficiently under `nomic-embed-text`'s tokenizer than under the chunker's size estimate. Added a text-cleaning step that strips this layout noise before chunking. Every chunk now embeds successfully (1,889 chunks, 1,889 vectors).
 
-See `git log` for details on both rounds.
+See `git log` for details across all three rounds.
 
 ---
 
@@ -34,7 +35,7 @@ make status             # View statistics
 
 ### Current Data
 - **Documents Indexed**: 17 PDFs
-- **Chunks**: 1,903 (1,885 embedded and searchable; 18 exceed the embedding model's context length and are skipped — see Known Limitations)
+- **Chunks**: 1,889, all embedded and searchable (0 failures)
 - **Tables**: 461 (persisted, queryable by document)
 - **Figures**: 1,046 (persisted, queryable by document)
 - **Vector Store**: Qdrant (embedded)
@@ -63,7 +64,7 @@ make status             # View statistics
 **Results**:
 - All 17 PDFs successfully parsed
 - Text, tables, and figures are extracted and persisted per document (tables/figures are queryable by document, not yet part of semantic search)
-- 1,903 chunks generated, each tagged with its real source page(s)
+- 1,889 chunks generated, each tagged with its real source page(s); all embed successfully
 
 ### ✅ Phase 3: Embedding & Vector Storage (100%)
 - [x] Ollama embedder (nomic-embed-text, 768-dim)
@@ -276,8 +277,7 @@ LLM Generation → Answer + Citations
 4. **English Only**: LLM and embedding models are English-focused
 5. **Single-writer index**: Qdrant's embedded mode locks its storage folder, so `rag ingest` and `rag query` can't run against the same `data/vector_store` at the same time.
 6. **Tables/figures aren't in vector search yet**: table and figure content is persisted and queryable by document (`MetadataStore.get_tables`/`get_figures`), but not embedded, so a question can't yet retrieve a table by semantic similarity the way it can retrieve prose chunks.
-7. **A small fraction of chunks can't be embedded**: ~1% of chunks (18 of 1,903 in the current corpus) exceed `nomic-embed-text`'s context length — usually long, punctuation-free text (e.g. dense reference lists) that the chunker's sentence-based oversized-paragraph splitter doesn't break up. These are skipped from vector search with a logged warning rather than corrupting the index.
-8. **Only unit tests exist**: 41 unit tests cover the core logic (chunking, storage, config, embedding), but there's no integration test exercising the full ingest→query pipeline against a real Ollama instance.
+7. **Only unit tests exist**: unit tests cover the core logic (chunking, storage, config, embedding), but there's no integration test exercising the full ingest→query pipeline against a real Ollama instance.
 
 ### Not Blockers
 - Graph retrieval: Current 2-stage pipeline works well
@@ -336,7 +336,7 @@ make test-connection   # Test Ollama connection
    - Add result caching
 
 2. **Testing**
-   - [x] Unit tests for components (41 tests: chunker, vector store, metadata store, config loaders, embedder)
+   - [x] Unit tests for components (43 tests: chunker, vector store, metadata store, config loaders, embedder)
    - [ ] Integration tests for the full pipeline against a real Ollama instance
    - [ ] Query quality evaluation
 
