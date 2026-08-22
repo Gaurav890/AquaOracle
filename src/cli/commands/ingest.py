@@ -6,7 +6,7 @@ from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
 from loguru import logger
 
-from src.core.config import settings
+from src.core.config import settings, load_model_config, load_chunking_config
 from src.document_processing.pdf_parser import PDFParser
 from src.document_processing.table_extractor import TableExtractor
 from src.document_processing.figure_extractor import FigureExtractor
@@ -18,6 +18,8 @@ from src.indexing.vector_store import VectorStore
 
 
 console = Console()
+model_config = load_model_config()
+chunking_config = load_chunking_config()
 
 
 @click.command()
@@ -36,7 +38,10 @@ def ingest(path, rebuild):
     if rebuild:
         console.print("[yellow]Rebuilding index from scratch...[/yellow]")
         metadata_store = MetadataStore(settings.full_metadata_db_path)
-        vector_store = VectorStore(path=settings.full_vector_store_path, embedding_dim=768)
+        vector_store = VectorStore(
+            path=settings.full_vector_store_path,
+            embedding_dim=model_config.embed_dimensions,
+        )
         metadata_store.clear_all()
         vector_store.clear()
         # Qdrant's embedded mode holds an exclusive lock on the storage path;
@@ -63,19 +68,20 @@ def ingest_single_pdf(pdf_path: Path):
         table_extractor = TableExtractor()
         figure_extractor = FigureExtractor()
         chunker = Chunker(
-            max_chunk_size=1024,
-            min_chunk_size=128,
-            overlap=0.2,
+            max_chunk_size=chunking_config.max_chunk_size,
+            min_chunk_size=chunking_config.min_chunk_size,
+            overlap=chunking_config.overlap,
         )
         metadata_extractor = MetadataExtractor()
         embedder = OllamaEmbedder(
             model=settings.ollama_embed_model,
             host=settings.ollama_host,
+            batch_size=model_config.embed_batch_size,
         )
         metadata_store = MetadataStore(settings.full_metadata_db_path)
         vector_store = VectorStore(
             path=settings.full_vector_store_path,
-            embedding_dim=768,
+            embedding_dim=model_config.embed_dimensions,
         )
 
         with Progress(
@@ -123,12 +129,13 @@ def ingest_single_pdf(pdf_path: Path):
             )
             chunk_texts = [chunk.text for chunk in chunks]
             embeddings = embedder.embed_documents(chunk_texts, show_progress=False)
+            failed_count = sum(1 for e in embeddings if e is None)
 
             for _ in range(len(chunks)):
                 progress.update(task6, advance=1)
 
             # Step 7: Store in databases
-            task7 = progress.add_task("[cyan]Storing in databases...", total=3)
+            task7 = progress.add_task("[cyan]Storing in databases...", total=5)
 
             # Store document metadata
             doc_metadata["chunk_count"] = len(chunks)
@@ -153,7 +160,30 @@ def ingest_single_pdf(pdf_path: Path):
                 metadata_store.add_chunk(chunk_id, doc_id, chunk_data)
             progress.update(task7, advance=1)
 
-            # Store embeddings in vector DB
+            # Store extracted tables and figures (re-ingesting the same doc
+            # shouldn't accumulate duplicate rows, so clear first)
+            metadata_store.clear_tables_and_figures(doc_id)
+            for table in tables:
+                metadata_store.add_table(doc_id, {
+                    "page_number": table.page_number,
+                    "row_count": table.row_count,
+                    "col_count": table.col_count,
+                    "has_header": table.has_header,
+                    "data": table.data,
+                })
+            for figure in figures:
+                metadata_store.add_figure(doc_id, {
+                    "page_number": figure.page_number,
+                    "image_index": figure.image_index,
+                    "caption": figure.caption,
+                    "width": figure.width,
+                    "height": figure.height,
+                })
+            progress.update(task7, advance=1)
+
+            # Store embeddings in vector DB — skip chunks whose embedding
+            # failed rather than storing a placeholder that would silently
+            # sit in the index as unsearchable.
             chunk_ids = [f"{doc_id}_chunk_{chunk.chunk_index}" for chunk in chunks]
             payloads = [
                 {
@@ -164,7 +194,15 @@ def ingest_single_pdf(pdf_path: Path):
                 }
                 for chunk in chunks
             ]
-            vector_store.add_embeddings(chunk_ids, embeddings, payloads)
+            valid = [
+                (cid, emb, payload)
+                for cid, emb, payload in zip(chunk_ids, embeddings, payloads)
+                if emb is not None
+            ]
+            progress.update(task7, advance=1)
+            if valid:
+                valid_ids, valid_embeddings, valid_payloads = map(list, zip(*valid))
+                vector_store.add_embeddings(valid_ids, valid_embeddings, valid_payloads)
             progress.update(task7, advance=1)
 
         # Summary
@@ -173,6 +211,11 @@ def ingest_single_pdf(pdf_path: Path):
         console.print(f"  • Chunks: {len(chunks)}")
         console.print(f"  • Tables: {len(tables)}")
         console.print(f"  • Figures: {len(figures)}")
+        if failed_count:
+            console.print(
+                f"  [yellow]⚠ {failed_count} chunk(s) failed to embed and are "
+                f"not searchable via vector search[/yellow]"
+            )
 
     except Exception as e:
         console.print(f"\n[bold red]✗ Failed to ingest {pdf_path.name}[/bold red]")

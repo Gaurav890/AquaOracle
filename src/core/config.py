@@ -154,8 +154,14 @@ def load_yaml_config(config_path: Path) -> dict:
         return yaml.safe_load(f)
 
 
-def load_model_config(config_dir: Path = Path("config")) -> ModelConfig:
+def _default_config_dir() -> Path:
+    """Repo-root-relative config/ dir, independent of the process's cwd."""
+    return settings.project_root / "config"
+
+
+def load_model_config(config_dir: Optional[Path] = None) -> ModelConfig:
     """Load model configuration from YAML."""
+    config_dir = config_dir or _default_config_dir()
     config_path = config_dir / "models.yaml"
     if config_path.exists():
         config_data = load_yaml_config(config_path)
@@ -176,6 +182,63 @@ def load_model_config(config_dir: Path = Path("config")) -> ModelConfig:
             reranker_max_length=config_data.get("reranker", {}).get("max_length", 512),
         )
     return ModelConfig()
+
+
+def load_retrieval_config(config_dir: Optional[Path] = None) -> RetrievalConfig:
+    """Load retrieval pipeline configuration from YAML."""
+    config_dir = config_dir or _default_config_dir()
+    config_path = config_dir / "retrieval.yaml"
+    if config_path.exists():
+        data = load_yaml_config(config_path)
+        stage1 = data.get("stage1_vector_search", {})
+        stage2 = data.get("stage2_reranking", {})
+        stage3 = data.get("stage3_graph_expansion", {})
+        stage4 = data.get("stage4_context_assembly", {})
+        return RetrievalConfig(
+            vector_top_k=stage1.get("top_k", 50),
+            vector_distance_metric=stage1.get("distance_metric", "cosine"),
+            vector_ef_search=stage1.get("ef_search", 128),
+            rerank_enabled=stage2.get("enabled", True),
+            rerank_top_n=stage2.get("top_n", 10),
+            rerank_score_threshold=stage2.get("score_threshold", 0.3),
+            graph_expansion_enabled=stage3.get("enabled", False),
+            graph_max_hops=stage3.get("max_hops", 1),
+            graph_max_neighbors=stage3.get("max_neighbors", 10),
+            graph_similarity_threshold=stage3.get("similarity_threshold", 0.75),
+            graph_include_sequential=stage3.get("include_sequential", True),
+            max_context_tokens=stage4.get("max_context_tokens", 8192),
+            overlap_handling=stage4.get("overlap_handling", "merge"),
+            sort_by=stage4.get("sort_by", ["relevance", "document", "page"]),
+            include_metadata=stage4.get("include_metadata", True),
+        )
+    return RetrievalConfig()
+
+
+def load_chunking_config(config_dir: Optional[Path] = None) -> ChunkingConfig:
+    """Load chunking strategy configuration from YAML."""
+    config_dir = config_dir or _default_config_dir()
+    config_path = config_dir / "chunking.yaml"
+    if config_path.exists():
+        data = load_yaml_config(config_path)
+        semantic = data.get("semantic_chunking", {})
+        hybrid = data.get("hybrid", {})
+        special = data.get("special_handling", {})
+        meta = data.get("metadata", {})
+        return ChunkingConfig(
+            strategy=data.get("strategy", "hybrid"),
+            min_chunk_size=semantic.get("min_chunk_size", 128),
+            max_chunk_size=hybrid.get("max_chunk_size", 1024),
+            overlap=hybrid.get("overlap", 0.2),
+            preserve_tables=special.get("preserve_tables", True),
+            preserve_lists=special.get("preserve_lists", True),
+            preserve_code_blocks=special.get("preserve_code_blocks", True),
+            keep_headers_with_content=special.get("keep_headers_with_content", True),
+            include_page_numbers=meta.get("include_page_numbers", True),
+            include_section_titles=meta.get("include_section_titles", True),
+            include_document_metadata=meta.get("include_document_metadata", True),
+            include_position=meta.get("include_position", True),
+        )
+    return ChunkingConfig()
 
 
 # Global settings instance

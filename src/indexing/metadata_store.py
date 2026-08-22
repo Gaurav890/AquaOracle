@@ -272,6 +272,101 @@ class MetadataStore:
             self.logger.error(f"Failed to get stats: {e}")
             return {}
 
+    def add_table(self, doc_id: str, table_data: Dict[str, Any]) -> bool:
+        """Add an extracted table's data for a document."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO tables (
+                        doc_id, page_number, row_count, col_count, has_header, table_data_json
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                """, (
+                    doc_id,
+                    table_data.get("page_number", 0),
+                    table_data.get("row_count", 0),
+                    table_data.get("col_count", 0),
+                    table_data.get("has_header", False),
+                    json.dumps(table_data.get("data", [])),
+                ))
+                conn.commit()
+                return True
+
+        except Exception as e:
+            self.logger.error(f"Failed to add table for {doc_id}: {e}")
+            return False
+
+    def add_figure(self, doc_id: str, figure_data: Dict[str, Any]) -> bool:
+        """Add an extracted figure's metadata for a document."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO figures (
+                        doc_id, page_number, image_index, caption, width, height
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                """, (
+                    doc_id,
+                    figure_data.get("page_number", 0),
+                    figure_data.get("image_index", 0),
+                    figure_data.get("caption"),
+                    figure_data.get("width", 0.0),
+                    figure_data.get("height", 0.0),
+                ))
+                conn.commit()
+                return True
+
+        except Exception as e:
+            self.logger.error(f"Failed to add figure for {doc_id}: {e}")
+            return False
+
+    def get_tables(self, doc_id: str) -> List[Dict[str, Any]]:
+        """Retrieve all extracted tables for a document."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT * FROM tables WHERE doc_id = ? ORDER BY page_number", (doc_id,)
+                )
+                rows = [dict(row) for row in cursor.fetchall()]
+                for row in rows:
+                    row["data"] = json.loads(row.pop("table_data_json") or "[]")
+                return rows
+
+        except Exception as e:
+            self.logger.error(f"Failed to get tables for {doc_id}: {e}")
+            return []
+
+    def get_figures(self, doc_id: str) -> List[Dict[str, Any]]:
+        """Retrieve all extracted figures for a document."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT * FROM figures WHERE doc_id = ? ORDER BY page_number", (doc_id,)
+                )
+                return [dict(row) for row in cursor.fetchall()]
+
+        except Exception as e:
+            self.logger.error(f"Failed to get figures for {doc_id}: {e}")
+            return []
+
+    def clear_tables_and_figures(self, doc_id: str) -> bool:
+        """Delete existing tables/figures for a document (e.g. before re-ingesting it)."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM tables WHERE doc_id = ?", (doc_id,))
+                cursor.execute("DELETE FROM figures WHERE doc_id = ?", (doc_id,))
+                conn.commit()
+                return True
+
+        except Exception as e:
+            self.logger.error(f"Failed to clear tables/figures for {doc_id}: {e}")
+            return False
+
     def clear_all(self) -> bool:
         """Delete all documents, chunks, tables, and figures."""
         try:

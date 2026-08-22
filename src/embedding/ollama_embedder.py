@@ -67,39 +67,47 @@ class OllamaEmbedder:
             self.logger.error(f"Failed to generate embedding: {e}")
             raise
 
-    def embed_batch(self, texts: List[str], show_progress: bool = False) -> List[List[float]]:
+    def embed_batch(self, texts: List[str], show_progress: bool = False) -> List[Optional[List[float]]]:
         """
-        Generate embeddings for a batch of texts.
+        Generate embeddings for a batch of texts in a single Ollama call.
 
         Args:
             texts: List of input texts
-            show_progress: Show progress bar
+            show_progress: Unused, kept for backwards compatibility
 
         Returns:
-            List of embedding vectors
+            List of embedding vectors, in the same order as `texts`. A failed
+            item is `None` rather than a fabricated zero-vector, so callers
+            can tell a real embedding from a missing one instead of silently
+            indexing a chunk that will never be found by search.
         """
-        embeddings = []
+        if not texts:
+            return []
 
-        iterator = tqdm(texts, desc="Generating embeddings") if show_progress else texts
+        try:
+            response = ollama.embed(model=self.model, input=texts)
+            return list(response["embeddings"])
 
-        for text in iterator:
-            try:
-                embedding = self.embed_text(text)
-                embeddings.append(embedding)
-
-            except Exception as e:
-                self.logger.warning(f"Failed to embed text (using zero vector): {e}")
-                # Use zero vector as fallback
-                embeddings.append([0.0] * 768)  # Default dimension
-
-        return embeddings
+        except Exception as e:
+            # The batch call failed as a whole (e.g. one malformed input can
+            # sink the whole request) — fall back to embedding items one at a
+            # time so a single bad chunk doesn't cost the entire batch.
+            self.logger.warning(f"Batch embedding failed ({e}); retrying items individually")
+            embeddings: List[Optional[List[float]]] = []
+            for text in texts:
+                try:
+                    embeddings.append(self.embed_text(text))
+                except Exception as item_error:
+                    self.logger.warning(f"Skipping chunk: failed to generate embedding: {item_error}")
+                    embeddings.append(None)
+            return embeddings
 
     def embed_documents(
         self,
         texts: List[str],
         batch_size: Optional[int] = None,
         show_progress: bool = True,
-    ) -> List[List[float]]:
+    ) -> List[Optional[List[float]]]:
         """
         Generate embeddings for multiple documents with batching.
 
@@ -109,10 +117,11 @@ class OllamaEmbedder:
             show_progress: Show progress bar
 
         Returns:
-            List of embedding vectors
+            List of embedding vectors (or None for chunks that failed to
+            embed), in the same order as `texts`.
         """
         batch_size = batch_size or self.batch_size
-        all_embeddings = []
+        all_embeddings: List[Optional[List[float]]] = []
 
         total_batches = (len(texts) + batch_size - 1) // batch_size
 
@@ -122,10 +131,14 @@ class OllamaEmbedder:
 
         for i in iterator:
             batch = texts[i:i + batch_size]
-            batch_embeddings = self.embed_batch(batch, show_progress=False)
+            batch_embeddings = self.embed_batch(batch)
             all_embeddings.extend(batch_embeddings)
 
-        self.logger.info(f"Generated {len(all_embeddings)} embeddings")
+        failed = sum(1 for e in all_embeddings if e is None)
+        if failed:
+            self.logger.warning(f"Generated {len(all_embeddings) - failed} embeddings, {failed} failed")
+        else:
+            self.logger.info(f"Generated {len(all_embeddings)} embeddings")
         return all_embeddings
 
     def get_embedding_dim(self) -> int:
