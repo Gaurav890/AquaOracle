@@ -89,7 +89,10 @@ class Settings(BaseSettings):
     """Main application settings."""
 
     # Project Paths
-    project_root: Path = Field(default=Path("/Users/gaurav/PROJECTS/RAG"))
+    # Self-locate the repo root from this file's location so the app works
+    # for any collaborator regardless of where they clone it, rather than
+    # requiring PROJECT_ROOT to be hand-edited per machine.
+    project_root: Path = Field(default_factory=lambda: Path(__file__).resolve().parents[2])
     source_docs_path: Path = Field(default=Path("soc"))
     data_path: Path = Field(default=Path("data"))
     vector_store_path: Path = Field(default=Path("data/vector_store"))

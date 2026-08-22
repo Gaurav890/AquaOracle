@@ -6,7 +6,6 @@ from datetime import datetime
 import sqlite3
 import json
 from loguru import logger
-from dataclasses import asdict
 
 
 class MetadataStore:
@@ -272,6 +271,23 @@ class MetadataStore:
         except Exception as e:
             self.logger.error(f"Failed to get stats: {e}")
             return {}
+
+    def clear_all(self) -> bool:
+        """Delete all documents, chunks, tables, and figures."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM chunks")
+                cursor.execute("DELETE FROM tables")
+                cursor.execute("DELETE FROM figures")
+                cursor.execute("DELETE FROM documents")
+                conn.commit()
+                self.logger.info("Cleared all documents, chunks, tables, and figures")
+                return True
+
+        except Exception as e:
+            self.logger.error(f"Failed to clear metadata store: {e}")
+            return False
 
     def delete_document(self, doc_id: str) -> bool:
         """Delete document and all associated data."""

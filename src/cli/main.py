@@ -1,7 +1,6 @@
 """Main CLI entry point."""
 
 import click
-from pathlib import Path
 from src.core.logging_config import setup_logging
 from src.core.config import settings
 

@@ -3,7 +3,7 @@
 from typing import List, Dict, Any, Optional
 from loguru import logger
 
-from src.indexing.vector_store import VectorStore, SearchResult
+from src.indexing.vector_store import VectorStore
 from src.embedding.ollama_embedder import OllamaEmbedder
 
 

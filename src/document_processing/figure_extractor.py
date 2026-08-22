@@ -1,7 +1,7 @@
 """Figure and image extraction from PDFs."""
 
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Optional
 import fitz  # PyMuPDF
 from dataclasses import dataclass
 from loguru import logger

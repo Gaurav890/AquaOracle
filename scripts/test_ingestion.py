@@ -9,7 +9,6 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from src.core.logging_config import setup_logging
-from src.core.config import settings
 from src.document_processing.pdf_parser import PDFParser
 from src.document_processing.chunker import Chunker
 from src.document_processing.metadata_extractor import MetadataExtractor
@@ -27,7 +26,7 @@ def test_parse_pdf(pdf_path: Path):
     parser = PDFParser()
     doc = parser.parse(pdf_path)
 
-    print(f"✓ Document parsed successfully")
+    print("✓ Document parsed successfully")
     print(f"  - Title: {doc.title}")
     print(f"  - Pages: {doc.page_count}")
     print(f"  - Total characters: {sum(len(p.text) for p in doc.pages):,}")
@@ -37,22 +36,21 @@ def test_parse_pdf(pdf_path: Path):
     metadata = metadata_extractor.extract(doc.metadata, pdf_path)
     doc_id = metadata_extractor.create_doc_id(pdf_path)
 
-    print(f"\n✓ Metadata extracted")
+    print("\n✓ Metadata extracted")
     print(f"  - Document ID: {doc_id}")
     print(f"  - Organization: {metadata.get('organization', 'N/A')}")
     print(f"  - Year: {metadata.get('year', 'N/A')}")
 
     # Chunk document
     chunker = Chunker(max_chunk_size=1024, overlap=0.2)
-    full_text = "\n\n".join(page.text for page in doc.pages)
+    pages = [(page.page_number, page.text) for page in doc.pages]
     chunks = chunker.chunk_document(
-        text=full_text,
+        pages=pages,
         doc_id=doc_id,
-        page_numbers=list(range(1, doc.page_count + 1)),
         metadata=metadata,
     )
 
-    print(f"\n✓ Document chunked")
+    print("\n✓ Document chunked")
     print(f"  - Total chunks: {len(chunks)}")
     print(f"  - Avg tokens per chunk: {sum(c.token_count for c in chunks) / len(chunks):.0f}")
 

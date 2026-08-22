@@ -3,7 +3,6 @@
 import click
 from rich.console import Console
 from rich.panel import Panel
-from rich.markdown import Markdown
 from loguru import logger
 
 from src.core.config import settings
@@ -98,7 +97,7 @@ def query(question, top_k, top_n, no_rerank):
         ))
 
         # Display sources
-        console.print(f"\n[bold cyan]Sources:[/bold cyan]")
+        console.print("\n[bold cyan]Sources:[/bold cyan]")
         console.print(response.formatted_sources)
 
         # Display metadata

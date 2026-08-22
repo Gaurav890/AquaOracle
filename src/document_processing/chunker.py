@@ -61,38 +61,40 @@ class Chunker:
 
     def chunk_document(
         self,
-        text: str,
+        pages: List[tuple],
         doc_id: str,
-        page_numbers: List[int],
         metadata: Optional[Dict[str, Any]] = None,
     ) -> List[Chunk]:
         """
         Chunk a document into semantically meaningful pieces.
 
         Args:
-            text: Document text
+            pages: List of (page_number, page_text) tuples, in document order
             doc_id: Document identifier
-            page_numbers: List of page numbers in document
             metadata: Additional metadata
 
         Returns:
-            List of chunks
+            List of chunks, each tagged with the actual page(s) its text came from
         """
         self.logger.debug(f"Chunking document {doc_id}")
 
-        if not text or not text.strip():
-            return []
+        # Split into paragraphs per-page so every paragraph keeps a precise
+        # page number instead of being tagged with the whole document's range.
+        paragraphs = []  # List[(page_number, text)]
+        for page_number, page_text in pages:
+            for para in self._split_paragraphs(page_text):
+                paragraphs.append((page_number, para))
 
-        # Split into paragraphs first
-        paragraphs = self._split_paragraphs(text)
+        if not paragraphs:
+            return []
 
         # Group paragraphs into chunks
         chunks = []
-        current_chunk = []
+        current_chunk = []  # List[(page_number, text)]
         current_tokens = 0
         chunk_index = 0
 
-        for para in paragraphs:
+        for page_number, para in paragraphs:
             para_tokens = self._count_tokens(para)
 
             # Handle oversized paragraphs (split them)
@@ -103,7 +105,6 @@ class Chunker:
                         current_chunk,
                         doc_id,
                         chunk_index,
-                        page_numbers,
                         metadata or {}
                     ))
                     chunk_index += 1
@@ -114,17 +115,16 @@ class Chunker:
                 sub_chunks = self._split_oversized_text(para, para_tokens)
                 for sub_text in sub_chunks:
                     chunks.append(self._create_chunk(
-                        [sub_text],
+                        [(page_number, sub_text)],
                         doc_id,
                         chunk_index,
-                        page_numbers,
                         metadata or {}
                     ))
                     chunk_index += 1
 
             # Add paragraph to current chunk if it fits
             elif current_tokens + para_tokens <= self.max_chunk_size:
-                current_chunk.append(para)
+                current_chunk.append((page_number, para))
                 current_tokens += para_tokens
 
             # Start new chunk if current is full
@@ -134,7 +134,6 @@ class Chunker:
                         current_chunk,
                         doc_id,
                         chunk_index,
-                        page_numbers,
                         metadata or {}
                     ))
                     chunk_index += 1
@@ -146,18 +145,18 @@ class Chunker:
                     overlap_text = []
                     overlap_token_count = 0
 
-                    for para in reversed(current_chunk):
-                        para_tokens = self._count_tokens(para)
-                        if overlap_token_count + para_tokens <= overlap_tokens:
-                            overlap_text.insert(0, para)
-                            overlap_token_count += para_tokens
+                    for prev_page, prev_para in reversed(current_chunk):
+                        prev_tokens = self._count_tokens(prev_para)
+                        if overlap_token_count + prev_tokens <= overlap_tokens:
+                            overlap_text.insert(0, (prev_page, prev_para))
+                            overlap_token_count += prev_tokens
                         else:
                             break
 
-                    current_chunk = overlap_text + [para]
+                    current_chunk = overlap_text + [(page_number, para)]
                     current_tokens = overlap_token_count + para_tokens
                 else:
-                    current_chunk = [para]
+                    current_chunk = [(page_number, para)]
                     current_tokens = para_tokens
 
         # Add final chunk
@@ -166,7 +165,6 @@ class Chunker:
                 current_chunk,
                 doc_id,
                 chunk_index,
-                page_numbers,
                 metadata or {}
             ))
 
@@ -211,15 +209,15 @@ class Chunker:
 
     def _create_chunk(
         self,
-        paragraphs: List[str],
+        paragraphs: List[tuple],
         doc_id: str,
         chunk_index: int,
-        page_numbers: List[int],
         metadata: Dict[str, Any],
     ) -> Chunk:
-        """Create a Chunk object from paragraphs."""
-        text = "\n\n".join(paragraphs)
+        """Create a Chunk object from a list of (page_number, text) paragraphs."""
+        text = "\n\n".join(para for _, para in paragraphs)
         token_count = self._count_tokens(text)
+        page_numbers = sorted(set(page for page, _ in paragraphs))
 
         return Chunk(
             text=text,

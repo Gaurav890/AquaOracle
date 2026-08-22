@@ -35,8 +35,14 @@ def ingest(path, rebuild):
 
     if rebuild:
         console.print("[yellow]Rebuilding index from scratch...[/yellow]")
-        # Clear existing indices
-        # TODO: Implement rebuild logic
+        metadata_store = MetadataStore(settings.full_metadata_db_path)
+        vector_store = VectorStore(path=settings.full_vector_store_path, embedding_dim=768)
+        metadata_store.clear_all()
+        vector_store.clear()
+        # Qdrant's embedded mode holds an exclusive lock on the storage path;
+        # release it now so ingest_single_pdf can open its own VectorStore below.
+        vector_store.close()
+        console.print("[yellow]Cleared existing indices.[/yellow]")
 
     if path.is_file() and path.suffix.lower() == '.pdf':
         ingest_single_pdf(path)
@@ -102,12 +108,10 @@ def ingest_single_pdf(pdf_path: Path):
 
             # Step 5: Chunk document
             task5 = progress.add_task("[cyan]Chunking document...", total=1)
-            full_text = "\n\n".join(page.text for page in pdf_doc.pages)
-            page_numbers = list(range(1, pdf_doc.page_count + 1))
+            pages = [(page.page_number, page.text) for page in pdf_doc.pages]
             chunks = chunker.chunk_document(
-                text=full_text,
+                pages=pages,
                 doc_id=doc_id,
-                page_numbers=page_numbers,
                 metadata=doc_metadata,
             )
             progress.update(task5, completed=1)
@@ -191,8 +195,8 @@ def ingest_directory(dir_path: Path):
         console.print(f"[bold cyan]({i}/{len(pdf_files)})[/bold cyan]")
         try:
             ingest_single_pdf(pdf_file)
-        except Exception as e:
+        except Exception:
             console.print(f"[red]Skipping {pdf_file.name} due to error[/red]")
             continue
 
-    console.print(f"\n[bold green]✓ Ingestion complete![/bold green]")
+    console.print("\n[bold green]✓ Ingestion complete![/bold green]")

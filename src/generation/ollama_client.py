@@ -1,6 +1,6 @@
 """Ollama LLM client for text generation."""
 
-from typing import Optional, Dict, Any, Iterator
+from typing import Optional, Iterator
 import ollama
 from loguru import logger
 

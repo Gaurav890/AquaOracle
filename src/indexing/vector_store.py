@@ -1,5 +1,6 @@
 """Qdrant vector store for embeddings."""
 
+import uuid
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
@@ -8,7 +9,6 @@ from qdrant_client.models import (
     Distance,
     VectorParams,
     PointStruct,
-    SearchParams,
 )
 from loguru import logger
 
@@ -101,18 +101,20 @@ class VectorStore:
             True if successful
         """
         try:
+            # Point IDs are derived deterministically from chunk_id (not a local
+            # per-call counter) so that ingesting multiple documents doesn't
+            # collide on the same small integer IDs and silently overwrite each
+            # other's vectors. This also makes re-ingesting a chunk idempotent.
             points = [
                 PointStruct(
-                    id=i,
+                    id=str(uuid.uuid5(uuid.NAMESPACE_URL, chunk_id)),
                     vector=embedding,
                     payload={
                         "chunk_id": chunk_id,
                         **payload,
                     }
                 )
-                for i, (chunk_id, embedding, payload) in enumerate(
-                    zip(chunk_ids, embeddings, payloads)
-                )
+                for chunk_id, embedding, payload in zip(chunk_ids, embeddings, payloads)
             ]
 
             self.client.upsert(
@@ -233,6 +235,17 @@ class VectorStore:
         except Exception as e:
             self.logger.error(f"Failed to get stats: {e}")
             return {}
+
+    def close(self) -> None:
+        """
+        Release the embedded Qdrant client and its file lock.
+
+        Qdrant's embedded (local) mode holds an exclusive lock on the storage
+        path for as long as the client is open, so any code that opens a
+        short-lived VectorStore (e.g. to clear the collection) must close it
+        before another VectorStore can open the same path.
+        """
+        self.client.close()
 
     def clear(self) -> bool:
         """Clear all vectors from collection."""
