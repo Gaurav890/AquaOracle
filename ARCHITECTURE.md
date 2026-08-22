@@ -155,7 +155,7 @@ PDF File → PDFParser → PDFDocument
 - `idx_documents_org` on documents(organization)
 - `idx_documents_year` on documents(year)
 
-**Current gap**: the `tables` and `figures` tables above exist in the schema, but nothing writes to them yet — `TableExtractor`/`FigureExtractor` produce real data during ingestion, only the counts make it into `documents.table_count`/`figure_count`. Treat table and figure content as not yet queryable.
+`TableExtractor`/`FigureExtractor` results are persisted here via `MetadataStore.add_table`/`add_figure`, queryable per-document via `get_tables`/`get_figures`. They aren't embedded into the vector store, though, so a query can't yet retrieve a table or figure by semantic similarity the way it retrieves prose chunks.
 
 ### 4. Retrieval Pipeline
 
@@ -338,7 +338,7 @@ LOG_FILE=logs/rag.log
 **retrieval.yaml**: Retrieval pipeline settings
 **chunking.yaml**: Chunking strategies
 
-**Current gap**: these files, plus the `VECTOR_TOP_K`/`RERANK_TOP_N`/`MAX_CONTEXT_TOKENS` env vars, aren't loaded by the running code — `ModelConfig`/`RetrievalConfig`/`ChunkingConfig` and `load_model_config()` exist in `src/core/config.py` but are never called. Every pipeline parameter is hardcoded directly in the CLI commands (`src/cli/commands/*.py`). Editing these YAML files currently has no effect; use `rag query --top-k`/`--top-n` to change retrieval size instead.
+These are loaded via `load_model_config()`/`load_retrieval_config()`/`load_chunking_config()` in `src/core/config.py` and drive the CLI commands (`src/cli/commands/*.py`) — editing them changes ingestion/retrieval behavior on the next run. The one exception is `stage3_graph_expansion.enabled`: since graph expansion isn't implemented, the app logs a warning and ignores that flag rather than acting on it. `rag query --top-k`/`--top-n` still override the YAML defaults per-invocation.
 
 ## Data Flow
 

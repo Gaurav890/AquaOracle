@@ -216,7 +216,7 @@ LOG_LEVEL=INFO
 LOG_FILE=logs/rag.log
 ```
 
-Note: `OLLAMA_*` and the logging vars above are the ones the app actually reads. `VECTOR_TOP_K`, `RERANK_TOP_N`, and `MAX_CONTEXT_TOKENS` aren't wired up yet — setting them in `.env` has no effect. To change retrieval size per query, use `rag query --top-k 100 --top-n 20` instead.
+Note: retrieval sizing (`top_k`, `top_n`, `max_context_tokens`) is controlled by `config/retrieval.yaml`, not `.env` — see the Retrieval Configuration section below. `rag query --top-k`/`--top-n` override the YAML defaults for a single query.
 
 ### Model Configuration
 
@@ -241,7 +241,7 @@ reranker:
   enabled: true
 ```
 
-Note: this file isn't loaded by the app yet — the model names above are hardcoded in `src/cli/commands/*.py` instead. Editing `models.yaml` currently has no effect.
+This file is loaded on every `rag ingest`/`rag query` run — editing it (e.g. to point at a different Ollama model) takes effect the next time you run either command.
 
 ### Retrieval Configuration
 
@@ -266,7 +266,7 @@ stage4_context_assembly:
   sort_by: ["relevance", "document", "page"]
 ```
 
-Note: same as above — this file isn't loaded yet either, and graph expansion (stage 3) isn't implemented regardless of what `enabled` says here. Use `rag query --top-k`/`--top-n` to adjust retrieval size.
+Also loaded automatically. One exception: graph expansion (stage 3) isn't implemented, so `stage3_graph_expansion.enabled` is ignored (with a logged warning) regardless of what it's set to here. Use `rag query --top-k`/`--top-n` to override retrieval size for a single query without editing the file.
 
 ---
 

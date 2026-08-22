@@ -1,8 +1,8 @@
 # RAG Platform - Project Status
 
 **Last Updated**: August 22, 2026
-**Version**: 0.8.1 (MVP Ready)
-**Implementation**: ~80% Complete
+**Version**: 0.8.2 (MVP Ready)
+**Implementation**: ~85% Complete
 
 ---
 
@@ -11,10 +11,14 @@
 The RAG platform core functionality is **fully operational** with Docker support. The system has been tested end-to-end with:
 - 17 PDFs ingested (~56 MB)
 - 1,903 chunks indexed, each with correct per-chunk page numbers
-- Tables and figures are detected and counted during ingestion, but not yet persisted for retrieval (see Known Limitations)
+- 461 tables and 1,046 figures extracted and persisted (queryable via `MetadataStore.get_tables`/`get_figures`, though not yet part of vector search)
 - Full query pipeline verified working, with citations that point to the specific document and page a chunk came from
 
-**2026-08-22 fixes**: A review of the pipeline found and fixed two correctness bugs that had gone unnoticed — vector IDs collided across documents, so search only ever returned results from one of the 17 PDFs, and every chunk was tagged with its entire document's page range instead of its real page. Both are fixed and the index has been rebuilt; see `git log` for details.
+**2026-08-22 fixes (two rounds)**:
+1. Found and fixed two correctness bugs that had gone unnoticed — vector IDs collided across documents, so search only ever returned results from one of the 17 PDFs, and every chunk was tagged with its entire document's page range instead of its real page.
+2. Wired up the previously-decorative `config/*.yaml` files, persisted extracted table/figure content (previously discarded), switched embedding to real batched Ollama calls with honest failure handling instead of silent zero-vectors, and added a 41-test unit suite. Re-ingesting under the new failure handling also surfaced a genuine, previously-invisible issue: ~1% of chunks (18 of 1,903) exceed the embedding model's context length and are now cleanly skipped with a warning instead of being silently stored as zero-vectors.
+
+See `git log` for details on both rounds.
 
 ---
 
@@ -30,11 +34,11 @@ make status             # View statistics
 
 ### Current Data
 - **Documents Indexed**: 17 PDFs
-- **Chunks**: ~2000
-- **Tables**: 300+
-- **Figures**: 800+
+- **Chunks**: 1,903 (1,885 embedded and searchable; 18 exceed the embedding model's context length and are skipped — see Known Limitations)
+- **Tables**: 461 (persisted, queryable by document)
+- **Figures**: 1,046 (persisted, queryable by document)
 - **Vector Store**: Qdrant (embedded)
-- **Metadata DB**: SQLite (9.4 MB)
+- **Metadata DB**: SQLite
 
 ---
 
@@ -58,7 +62,7 @@ make status             # View statistics
 
 **Results**:
 - All 17 PDFs successfully parsed
-- Text, tables, and figures are extracted per document, but table/figure content is only counted, not stored — it isn't searchable yet
+- Text, tables, and figures are extracted and persisted per document (tables/figures are queryable by document, not yet part of semantic search)
 - 1,903 chunks generated, each tagged with its real source page(s)
 
 ### ✅ Phase 3: Embedding & Vector Storage (100%)
@@ -266,14 +270,14 @@ LLM Generation → Answer + Citations
 ## Known Limitations
 
 ### Current
-1. **No Graph Retrieval**: Graph-based context expansion not implemented (low priority)
+1. **No Graph Retrieval**: Graph-based context expansion not implemented (low priority). `retrieval.yaml` has a `stage3_graph_expansion.enabled` flag, but the app logs a warning and ignores it rather than pretending to run it.
 2. **No Web Interface**: CLI and Docker only (API/Web UI planned)
 3. **Single Document Type**: PDFs only (extensible to other formats)
 4. **English Only**: LLM and embedding models are English-focused
-5. **Config files aren't wired up yet**: `config/models.yaml`, `config/retrieval.yaml`, and `config/chunking.yaml`, along with the `VECTOR_TOP_K` / `RERANK_TOP_N` / `MAX_CONTEXT_TOKENS` env vars, are not read by the running code. Every pipeline parameter is currently hardcoded in the CLI commands; use `rag query --top-k`/`--top-n` to change retrieval size for now.
-6. **No automated tests**: `pytest` is configured with coverage reporting, but `tests/` is empty.
-7. **Single-writer index**: Qdrant's embedded mode locks its storage folder, so `rag ingest` and `rag query` can't run against the same `data/vector_store` at the same time.
-8. **Table/figure content not searchable**: extraction runs and produces per-document counts, but the actual table and figure data isn't persisted anywhere queries can reach.
+5. **Single-writer index**: Qdrant's embedded mode locks its storage folder, so `rag ingest` and `rag query` can't run against the same `data/vector_store` at the same time.
+6. **Tables/figures aren't in vector search yet**: table and figure content is persisted and queryable by document (`MetadataStore.get_tables`/`get_figures`), but not embedded, so a question can't yet retrieve a table by semantic similarity the way it can retrieve prose chunks.
+7. **A small fraction of chunks can't be embedded**: ~1% of chunks (18 of 1,903 in the current corpus) exceed `nomic-embed-text`'s context length — usually long, punctuation-free text (e.g. dense reference lists) that the chunker's sentence-based oversized-paragraph splitter doesn't break up. These are skipped from vector search with a logged warning rather than corrupting the index.
+8. **Only unit tests exist**: 41 unit tests cover the core logic (chunking, storage, config, embedding), but there's no integration test exercising the full ingest→query pipeline against a real Ollama instance.
 
 ### Not Blockers
 - Graph retrieval: Current 2-stage pipeline works well
@@ -332,9 +336,9 @@ make test-connection   # Test Ollama connection
    - Add result caching
 
 2. **Testing**
-   - Unit tests for components
-   - Integration tests for pipeline
-   - Query quality evaluation
+   - [x] Unit tests for components (41 tests: chunker, vector store, metadata store, config loaders, embedder)
+   - [ ] Integration tests for the full pipeline against a real Ollama instance
+   - [ ] Query quality evaluation
 
 ### Short Term (If Needed)
 3. **REST API** (Phase 8)
