@@ -2,7 +2,9 @@
 
 import click
 from rich.console import Console
+from rich.live import Live
 from rich.panel import Panel
+from rich.spinner import Spinner
 from loguru import logger
 
 from src.core.config import settings, load_model_config, load_retrieval_config
@@ -47,8 +49,11 @@ def query(question, top_k, top_n, no_rerank):
 
     console.print(f"\n[bold cyan]Question:[/bold cyan] {question}\n")
 
+    def answer_panel(text: str) -> Panel:
+        return Panel(text, title="[bold green]Answer[/bold green]", border_style="green")
+
     try:
-        with console.status("[bold green]Processing query...", spinner="dots"):
+        with Live(Spinner("dots", text="Processing query..."), console=console, refresh_per_second=10) as live:
             # Initialize components
             embedder = OllamaEmbedder(
                 model=settings.ollama_embed_model,
@@ -96,19 +101,23 @@ def query(question, top_k, top_n, no_rerank):
                 llm_client=llm_client,
             )
 
-            # Generate response
+            # Generate response — retrieval runs first (fast, the spinner
+            # above still shows), then generation streams token-by-token so
+            # the answer appears progressively instead of after a single
+            # ~20-30s wait. Total generation time is unchanged; this only
+            # improves perceived latency.
+            accumulated = []
+
+            def on_token(piece: str) -> None:
+                accumulated.append(piece)
+                live.update(answer_panel("".join(accumulated)))
+
             response = response_gen.generate(
                 question=question,
                 top_k=top_k,
                 top_n=top_n,
+                on_token=on_token,
             )
-
-        # Display answer
-        console.print(Panel(
-            response.answer,
-            title="[bold green]Answer[/bold green]",
-            border_style="green",
-        ))
 
         # Display sources
         console.print("\n[bold cyan]Sources:[/bold cyan]")

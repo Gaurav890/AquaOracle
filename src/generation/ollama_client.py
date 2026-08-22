@@ -100,6 +100,7 @@ class OllamaClient:
         prompt: str,
         system_prompt: Optional[str] = None,
         temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
     ) -> Iterator[str]:
         """
         Generate text with streaming.
@@ -108,6 +109,7 @@ class OllamaClient:
             prompt: User prompt
             system_prompt: System prompt
             temperature: Sampling temperature
+            max_tokens: Override max tokens
 
         Yields:
             Generated text chunks
@@ -115,6 +117,7 @@ class OllamaClient:
         try:
             options = {
                 "temperature": temperature or self.temperature,
+                "num_predict": max_tokens or self.max_tokens,
             }
 
             if system_prompt:

@@ -1,7 +1,7 @@
 """Complete RAG response generation."""
 
 import re
-from typing import Dict, Any, Optional
+from typing import Callable, Dict, Any, Optional
 from dataclasses import dataclass
 from loguru import logger
 
@@ -52,6 +52,7 @@ class ResponseGenerator:
         top_k: int = 50,
         top_n: int = 10,
         doc_filter: Optional[Dict[str, Any]] = None,
+        on_token: Optional[Callable[[str], None]] = None,
     ) -> RAGResponse:
         """
         Generate complete RAG response.
@@ -61,6 +62,11 @@ class ResponseGenerator:
             top_k: Vector search top K
             top_n: Re-ranking top N
             doc_filter: Filter by document
+            on_token: If given, stream generation and call this with each
+                text chunk as it arrives (e.g. to print progressively)
+                instead of blocking until the full answer is ready. Total
+                generation time is unchanged either way — this only affects
+                when the caller sees output.
 
         Returns:
             RAGResponse with answer and citations
@@ -83,10 +89,17 @@ class ResponseGenerator:
 
         # Step 3: Generate answer
         self.logger.info("Generating answer with LLM")
-        answer = self.llm_client.generate(
-            prompt=prompt,
-            system_prompt=SYSTEM_PROMPT,
-        )
+        if on_token:
+            pieces = []
+            for piece in self.llm_client.generate_stream(prompt=prompt, system_prompt=SYSTEM_PROMPT):
+                pieces.append(piece)
+                on_token(piece)
+            answer = "".join(pieces)
+        else:
+            answer = self.llm_client.generate(
+                prompt=prompt,
+                system_prompt=SYSTEM_PROMPT,
+            )
 
         # Step 4: Format sources — only the ones the answer actually cites,
         # not every chunk that was fed to the LLM as context. Most retrieved
