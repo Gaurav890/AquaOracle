@@ -14,15 +14,38 @@ const Chat = (function () {
     titleInput.disabled = !enabled;
   }
 
+  function formatPageAndLines(pageNumbers, lineRanges) {
+    if (!pageNumbers || pageNumbers.length === 0) return "";
+    if (!lineRanges || Object.keys(lineRanges).length === 0) {
+      return pageNumbers.length === 1
+        ? `p.${pageNumbers[0]}`
+        : `p.${pageNumbers[0]}-${pageNumbers[pageNumbers.length - 1]}`;
+    }
+    return pageNumbers
+      .map((page) => {
+        const range = lineRanges[page] ?? lineRanges[String(page)];
+        if (!range) return `p.${page}`;
+        const [start, end] = range;
+        return start === end ? `p.${page} L${start}` : `p.${page} L${start}-${end}`;
+      })
+      .join("; ");
+  }
+
   function renderSources(sources) {
     if (!sources || sources.length === 0) return null;
     const wrap = document.createElement("div");
     wrap.className = "message-sources";
     for (const s of sources) {
-      const chip = document.createElement("span");
+      const chip = document.createElement("a");
       chip.className = "source-chip";
-      const pages = s.page_numbers && s.page_numbers.length ? ` p.${s.page_numbers.join("-")}` : "";
-      chip.textContent = `[${s.index}] ${s.doc_id}${pages}`;
+      const locator = formatPageAndLines(s.page_numbers, s.line_ranges);
+      chip.textContent = `[${s.index}] ${s.doc_id}${locator ? " " + locator : ""}`;
+
+      const firstPage = s.page_numbers && s.page_numbers.length ? s.page_numbers[0] : null;
+      chip.href = `/api/documents/${encodeURIComponent(s.doc_id)}/file${firstPage ? `#page=${firstPage}` : ""}`;
+      chip.target = "_blank";
+      chip.rel = "noopener";
+
       wrap.appendChild(chip);
     }
     return wrap;

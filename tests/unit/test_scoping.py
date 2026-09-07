@@ -87,6 +87,24 @@ def test_legacy_cli_ingested_doc_is_visible_to_every_chat(db_session, metadata_s
     assert allowed == ["legacy"]
 
 
+def test_chat_with_its_own_document_excludes_the_legacy_corpus(db_session, metadata_store):
+    """Regression test: a chat scoped to a specific uploaded document must
+    NOT also pull in the (potentially huge) legacy/shared corpus — a small,
+    specific upload was getting drowned out by thousands of unrelated
+    legacy chunks for any query that didn't happen to match it exactly."""
+    _make_chat(db_session, "chat1", "u1")
+    metadata_store.add_document(
+        "docA", {"file_name": "a.pdf", "file_path": "/a", "page_count": 1, "owner_user_id": "u1"}
+    )
+    db_session.add(ChatDocument(chat_id="chat1", doc_id="docA"))
+    db_session.commit()
+    metadata_store.add_document("legacy", {"file_name": "l.pdf", "file_path": "/l", "page_count": 1})
+
+    allowed = get_allowed_doc_ids(db_session, metadata_store, chat_id="chat1", user_id="u1")
+
+    assert allowed == ["docA"]
+
+
 def test_another_users_private_document_is_not_visible(db_session, metadata_store):
     metadata_store.add_document(
         "theirs", {"file_name": "t.pdf", "file_path": "/t", "page_count": 1, "owner_user_id": "u2"}

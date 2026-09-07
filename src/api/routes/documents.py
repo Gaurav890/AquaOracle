@@ -4,9 +4,11 @@ the shared-knowledge-base toggle.
 
 import re
 import uuid
+from pathlib import Path
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -46,6 +48,15 @@ def _doc_to_out(doc: dict) -> DocumentOut:
 
 
 _SAFE_FILENAME_RE = re.compile(r"[^\w.\- ]")
+
+
+def _resolve_file_path(file_path: str) -> Path:
+    """documents.file_path is absolute for web uploads but relative (to the
+    repo root, from `rag ingest`'s cwd at ingestion time) for CLI-ingested
+    legacy docs — resolve against project_root so this doesn't depend on
+    the server process's own cwd."""
+    p = Path(file_path)
+    return p if p.is_absolute() else settings.project_root / p
 
 
 @router.post("/chats/{chat_id}/documents", response_model=DocumentOut, status_code=status.HTTP_201_CREATED)
@@ -99,6 +110,36 @@ def list_chat_documents(chat_id: str, db: Session = Depends(get_db), user: User 
 def list_my_documents(user: User = Depends(get_current_user)):
     metadata_store = MetadataStore(settings.full_metadata_db_path)
     return [_doc_to_out(d) for d in metadata_store.list_documents(owner_user_id=user.id)]
+
+
+@router.get("/documents/{doc_id}/file")
+def get_document_file(doc_id: str, user: User = Depends(get_current_user)):
+    """Serves the original PDF so citation chips can link straight to the
+    source page (`#page=N`) in the browser's native PDF viewer. Same
+    visibility rule as everywhere else: legacy/CLI-ingested docs (no
+    owner) are visible to everyone, a user's own upload is visible to
+    them, anything else 404s rather than revealing it exists."""
+    metadata_store = MetadataStore(settings.full_metadata_db_path)
+    doc = metadata_store.get_document(doc_id)
+    if doc is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    owner = doc.get("owner_user_id")
+    if owner is not None and owner != user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    path = _resolve_file_path(doc["file_path"])
+    if not path.exists():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source file missing on disk")
+
+    return FileResponse(
+        path,
+        media_type="application/pdf",
+        filename=doc.get("file_name") or path.name,
+        # Inline, not attachment — a forced download wouldn't open in the
+        # browser's PDF viewer, which is what makes the #page=N deep link work.
+        content_disposition_type="inline",
+    )
 
 
 @router.post("/documents/{doc_id}/share", response_model=DocumentOut)
