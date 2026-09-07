@@ -1,0 +1,53 @@
+/* Design tokens — Linear/Vercel style: dark, sharp-edged, high-contrast,
+   restrained. One confident accent color, no neon/glow/scanline effects.
+   System fonts only — no CDN loads (this product's whole pitch is
+   100% local/offline). */
+
+:root {
+  /* Color */
+  --color-canvas: #0B0B0E;
+  --color-surface: #16161A;
+  --color-surface-2: #1C1C21;
+  --color-border: #26262C;
+  --color-border-strong: #38383F;
+
+  --color-text: #EDEDEF;
+  --color-text-muted: #9A9AA2;
+  --color-text-faint: #6C6C74;
+
+  --color-accent: #5E6AD2;
+  --color-accent-hover: #6E79DE;
+  --color-accent-text: #FFFFFF;
+
+  --color-danger: #E5484D;
+  --color-danger-bg: #3A1E1F;
+  --color-success: #3DD68C;
+
+  /* Spacing — 4px base scale */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+
+  /* Type */
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "Roboto Mono", Consolas, monospace;
+
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 14px;
+  --text-md: 16px;
+  --text-lg: 20px;
+  --text-xl: 28px;
+
+  /* Radius — nothing above 8px: sharp/geometric, not soft/pill-shaped */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+
+  --shadow-popover: 0 4px 16px rgba(0, 0, 0, 0.4);
+}

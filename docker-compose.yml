@@ -6,6 +6,8 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: rag-platform
+    ports:
+      - "7860:7860"  # Web UI (rag web) — published for `docker-compose run --service-ports`
     volumes:
       # Mount source code for development
       - ./src:/app/src

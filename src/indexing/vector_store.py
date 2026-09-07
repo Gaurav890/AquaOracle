@@ -149,27 +149,19 @@ class VectorStore:
             List of search results
         """
         try:
-            # Build filter
-            query_filter = None
-            if doc_filter:
-                # Qdrant filter format
-                query_filter = {
-                    "must": [
-                        {"key": k, "match": {"value": v}}
-                        for k, v in doc_filter.items()
-                    ]
-                }
+            from qdrant_client.models import Filter, FieldCondition, MatchAny, MatchValue
 
-            # Search
-            from qdrant_client.models import Filter, FieldCondition, MatchValue
-
-            # Build Qdrant filter if needed
+            # Build Qdrant filter if needed. A list value means "any of
+            # these" (e.g. doc_id in [chat's own docs + shared docs]) —
+            # everything else is a plain equality match.
             qdrant_filter = None
             if doc_filter:
-                conditions = [
-                    FieldCondition(key=k, match=MatchValue(value=v))
-                    for k, v in doc_filter.items()
-                ]
+                conditions = []
+                for k, v in doc_filter.items():
+                    if isinstance(v, (list, tuple, set)):
+                        conditions.append(FieldCondition(key=k, match=MatchAny(any=list(v))))
+                    else:
+                        conditions.append(FieldCondition(key=k, match=MatchValue(value=v)))
                 qdrant_filter = Filter(must=conditions)
 
             results = self.client.query_points(
@@ -203,15 +195,13 @@ class VectorStore:
     def delete_by_doc_id(self, doc_id: str) -> bool:
         """Delete all vectors for a document."""
         try:
+            from qdrant_client.models import Filter, FieldCondition, MatchValue
+
             self.client.delete(
                 collection_name=self.collection_name,
-                points_selector={
-                    "filter": {
-                        "must": [
-                            {"key": "doc_id", "match": {"value": doc_id}}
-                        ]
-                    }
-                },
+                points_selector=Filter(
+                    must=[FieldCondition(key="doc_id", match=MatchValue(value=doc_id))]
+                ),
             )
 
             self.logger.info(f"Deleted vectors for document {doc_id}")

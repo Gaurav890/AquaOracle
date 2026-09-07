@@ -36,8 +36,9 @@ RUN mkdir -p /app/data/vector_store /app/data/graph_db /app/logs
 ENV PYTHONUNBUFFERED=1
 ENV OLLAMA_HOST=http://host.docker.internal:11434
 
-# Expose API port (for future use)
+# Expose API port (for future use) and the web UI (`rag web`)
 EXPOSE 8000
+EXPOSE 7860
 
 # Default command
 CMD ["bash"]

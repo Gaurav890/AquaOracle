@@ -115,6 +115,17 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_file: Optional[str] = "logs/rag.log"
 
+    # Auth & Security
+    # Required for encrypting stored OpenAI/Anthropic API keys (Fernet) and
+    # signing session cookies. Generate with:
+    #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    secret_key: str = ""
+    session_cookie_name: str = "rag_session"
+    session_ttl_days: int = 30
+    # Only send the session cookie over HTTPS. Keep False for local/plain-HTTP
+    # dev; set True once served behind TLS.
+    cookie_secure: bool = False
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
