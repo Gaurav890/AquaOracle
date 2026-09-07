@@ -8,8 +8,11 @@ def make_generator():
     return ResponseGenerator(retrieval_pipeline=None, llm_client=None)
 
 
-def make_chunk(doc_id, page_numbers):
-    return {"doc_id": doc_id, "page_numbers": page_numbers}
+def make_chunk(doc_id, page_numbers, line_ranges=None):
+    chunk = {"doc_id": doc_id, "page_numbers": page_numbers}
+    if line_ranges is not None:
+        chunk["line_ranges"] = line_ranges
+    return chunk
 
 
 def test_extract_cited_indices_finds_bracket_numbers():
@@ -85,6 +88,20 @@ def test_format_sources_keeps_original_numbering_for_non_contiguous_citations():
     assert "[1] A" in formatted
     assert "[3] C" in formatted
     assert "[2]" not in formatted
+
+
+def test_format_sources_includes_line_ranges_for_frontend_deep_linking():
+    """Regression test: line_ranges was computed and used to build the
+    plain-text formatted string, but silently dropped from the structured
+    `sources` list the web UI actually renders from — so citation chips
+    could only ever show a page number, never the line range, even though
+    the data existed the whole time."""
+    gen = make_generator()
+    chunks = [make_chunk("A", [12], line_ranges={12: (5, 9)})]
+
+    sources, _ = gen._format_sources(chunks, {}, only_indices={1})
+
+    assert sources[0]["line_ranges"] == {12: (5, 9)}
 
 
 def test_format_sources_falls_back_to_all_when_no_indices_given():

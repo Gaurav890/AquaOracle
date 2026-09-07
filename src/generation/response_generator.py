@@ -194,6 +194,7 @@ class ResponseGenerator:
                 "index": i,
                 "doc_id": doc_id,
                 "page_numbers": page_numbers,
+                "line_ranges": chunk.get("line_ranges") or {},
                 "section": section,
             }
             sources.append(source_entry)

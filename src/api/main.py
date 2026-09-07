@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
@@ -41,6 +42,12 @@ def create_app() -> FastAPI:
     app.include_router(chats_routes.router)
     app.include_router(documents_routes.router)
     app.include_router(settings_routes.router)
+
+    @app.get("/", include_in_schema=False)
+    async def root():
+        # No index.html — auth.js itself redirects to /app.html if already
+        # logged in, so sending everyone through /auth.html first is safe.
+        return RedirectResponse(url="/auth.html")
 
     if STATIC_DIR.exists():
         app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
