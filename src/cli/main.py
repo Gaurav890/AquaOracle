@@ -24,13 +24,14 @@ def version():
 
 
 # Import command modules
-from src.cli.commands import ingest, query, index
+from src.cli.commands import ingest, query, index, web
 
 
 # Register command groups
 cli.add_command(ingest.ingest)
 cli.add_command(query.query)
 cli.add_command(index.index)
+cli.add_command(web.web)
 
 
 if __name__ == '__main__':

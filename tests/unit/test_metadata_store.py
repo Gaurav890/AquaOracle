@@ -134,3 +134,47 @@ def test_list_documents_returns_all(store):
     docs = store.list_documents()
 
     assert {d["doc_id"] for d in docs} == {"doc1", "doc2"}
+
+
+def test_list_documents_for_a_user_excludes_other_users_private_docs(store):
+    store.add_document("legacy_doc", {"file_name": "d0.pdf", "file_path": "/p0", "page_count": 1})
+    store.add_document("mine", {"file_name": "d1.pdf", "file_path": "/p1", "page_count": 1, "owner_user_id": "u1"})
+    store.add_document(
+        "theirs", {"file_name": "d2.pdf", "file_path": "/p2", "page_count": 1, "owner_user_id": "u2"}
+    )
+
+    docs = store.list_documents(owner_user_id="u1")
+
+    doc_ids = {d["doc_id"] for d in docs}
+    assert doc_ids == {"legacy_doc", "mine"}
+
+
+def test_list_shared_doc_ids_includes_legacy_and_own_shared_docs(store):
+    store.add_document("legacy_doc", {"file_name": "d0.pdf", "file_path": "/p0", "page_count": 1})
+    store.add_document(
+        "shared_mine",
+        {"file_name": "d1.pdf", "file_path": "/p1", "page_count": 1, "owner_user_id": "u1", "is_shared": True},
+    )
+    store.add_document(
+        "private_mine",
+        {"file_name": "d2.pdf", "file_path": "/p2", "page_count": 1, "owner_user_id": "u1", "is_shared": False},
+    )
+    store.add_document(
+        "shared_theirs",
+        {"file_name": "d3.pdf", "file_path": "/p3", "page_count": 1, "owner_user_id": "u2", "is_shared": True},
+    )
+
+    shared = store.list_shared_doc_ids(owner_user_id="u1")
+
+    assert set(shared) == {"legacy_doc", "shared_mine"}
+
+
+def test_set_shared_toggles_visibility(store):
+    store.add_document(
+        "doc1", {"file_name": "d1.pdf", "file_path": "/p1", "page_count": 1, "owner_user_id": "u1"}
+    )
+
+    result = store.set_shared("doc1", True)
+
+    assert result is True
+    assert store.list_shared_doc_ids(owner_user_id="u1") == ["doc1"]

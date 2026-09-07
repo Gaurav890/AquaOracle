@@ -52,6 +52,53 @@ def test_search_returns_added_vectors(store):
     assert results[0].text == "first"
 
 
+def test_search_with_doc_filter_list_matches_any(store):
+    """Regression test for per-chat document scoping: a list value in
+    doc_filter must match any of the listed doc_ids (Qdrant MatchAny),
+    not just a single exact value.
+    """
+    store.add_embeddings(
+        ["c1", "c2", "c3"],
+        [[1, 0, 0, 0], [1, 0, 0, 0], [1, 0, 0, 0]],
+        [
+            {"doc_id": "docA", "text": "from A"},
+            {"doc_id": "docB", "text": "from B"},
+            {"doc_id": "docC", "text": "from C"},
+        ],
+    )
+
+    results = store.search(query_vector=[1, 0, 0, 0], top_k=10, doc_filter={"doc_id": ["docA", "docC"]})
+
+    doc_ids = {r.doc_id for r in results}
+    assert doc_ids == {"docA", "docC"}
+
+
+def test_search_with_doc_filter_single_value_still_matches_exact(store):
+    store.add_embeddings(
+        ["c1", "c2"],
+        [[1, 0, 0, 0], [1, 0, 0, 0]],
+        [{"doc_id": "docA", "text": "from A"}, {"doc_id": "docB", "text": "from B"}],
+    )
+
+    results = store.search(query_vector=[1, 0, 0, 0], top_k=10, doc_filter={"doc_id": "docA"})
+
+    assert len(results) == 1
+    assert results[0].doc_id == "docA"
+
+
+def test_delete_by_doc_id_removes_only_that_documents_vectors(store):
+    store.add_embeddings(
+        ["a1", "a2", "b1"],
+        [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0]],
+        [{"doc_id": "docA"}, {"doc_id": "docA"}, {"doc_id": "docB"}],
+    )
+
+    assert store.delete_by_doc_id("docA")
+
+    results = store.search(query_vector=[1, 0, 0, 0], top_k=10)
+    assert {r.doc_id for r in results} == {"docB"}
+
+
 def test_clear_removes_all_vectors(store):
     store.add_embeddings(["c1"], [[1, 0, 0, 0]], [{"doc_id": "doc"}])
     assert store.get_stats()["total_vectors"] == 1

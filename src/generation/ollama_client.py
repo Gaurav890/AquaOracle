@@ -4,8 +4,10 @@ from typing import Optional, Iterator
 import ollama
 from loguru import logger
 
+from src.generation.base_client import LLMClient
 
-class OllamaClient:
+
+class OllamaClient(LLMClient):
     """Client for Ollama LLM generation."""
 
     def __init__(

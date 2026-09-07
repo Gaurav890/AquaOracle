@@ -1,4 +1,4 @@
-.PHONY: help build up down shell ingest query status clean logs
+.PHONY: help build up down shell ingest query status clean logs web
 
 help: ## Show this help message
 	@echo "RAG Platform - Docker Commands"
@@ -33,6 +33,9 @@ status: ## Show index status
 
 list: ## List all indexed documents
 	docker-compose run --rm rag-platform rag index list
+
+web: ## Launch the web UI (chat + document management) at http://localhost:7860
+	docker-compose run --rm --service-ports rag-platform rag web
 
 logs: ## Show container logs
 	docker-compose logs -f rag-platform

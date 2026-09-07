@@ -9,13 +9,19 @@ This document describes the architecture of the privacy-focused RAG (Retrieval-A
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                  USER INTERFACE LAYER                        │
-│         CLI Commands | REST API | Web Dashboard             │
+│  CLI Commands | FastAPI REST/SSE API | Web App (multi-user) │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+┌──────────────────────────┴──────────────────────────────────┐
+│         AUTH, CHAT & DOCUMENT SCOPING (web app only)         │
+│  Session cookies → per-user chats → allowed-doc-id resolver │
 └──────────────────────────┬──────────────────────────────────┘
                            │
 ┌──────────────────────────┴──────────────────────────────────┐
 │              QUERY PROCESSING & GENERATION                   │
-│  Query → Retrieval Pipeline → LLM (Ollama) → Response       │
-│                    with Citations                            │
+│  Query → Retrieval Pipeline → LLM (Ollama/OpenAI/Anthropic) │
+│         → Response with Citations (provider is per-chat,     │
+│           chosen by the user; local Ollama by default)       │
 └──────────────────────────┬──────────────────────────────────┘
                            │
 ┌──────────────────────────┴──────────────────────────────────┐
@@ -254,17 +260,66 @@ rag query "What are CDC water quality standards?"
 rag index status
 ```
 
-#### REST API (TODO: `src/api/`)
-- FastAPI application
-- Endpoints: /api/query, /api/admin/*, /api/health
-- Swagger documentation at /docs
-- CORS and logging middleware
+#### Web platform (`src/api/` + `src/web/static/`)
 
-#### Web UI (TODO: `src/web/`)
-- Gradio or Streamlit interface
-- Chat-style query interface
-- Source preview and citation display
-- System dashboard
+The web UI was originally a single-user Gradio app. It has been rebuilt into a multi-user
+platform: FastAPI backend (`src/api/`) serving a hand-written vanilla HTML/CSS/JS frontend
+(`src/web/static/` — no Node toolchain, no React/Vue/Svelte, styled in a dark/sharp-edged
+Linear/Vercel look). The old Gradio app (`src/web/app.py`, `theme.py`) and the `gradio`
+dependency have both been removed.
+
+- **App factory** (`src/api/main.py`): `create_app()` registers the auth/chats/documents/settings
+  routers, mounts the static frontend, and refuses to start if `SECRET_KEY` isn't set (needed to
+  encrypt stored provider API keys). Launched via `rag web` (`src/cli/commands/web.py`, now a thin
+  `uvicorn.run(...)` wrapper) or `make web`, served at `:7860`.
+- **Auth** (`src/auth/`, `src/api/routes/auth.py`): real signup/login/logout. Passwords hashed
+  with `bcrypt`. Sessions are opaque `secrets.token_urlsafe(32)` tokens stored server-side in a
+  `sessions` table and set as an `httponly`/`samesite=Lax` cookie — deliberately not JWT (JWT
+  revocation needs a blocklist anyway for a single local server) and not Starlette's built-in
+  `SessionMiddleware` (that round-trips the whole session payload in a signed cookie and can't be
+  revoked server-side without rotating the app secret for every user). `httponly` also means the
+  cookie is unreadable from page JavaScript — verified during Phase 3 testing, which is why live
+  endpoint verification for this rebuild is done via a real login (curl/httpx capturing its own
+  `Set-Cookie`) rather than replaying a token pulled out of `document.cookie`.
+- **Chats** (`src/chat/`, `src/api/routes/chats.py`): each user has multiple persistent `Chat`
+  rows, each with its own `Message` history and its own `provider`/`model` (default: Ollama).
+  Sending a message streams the answer over SSE (`src/api/services/streaming.py`, using the same
+  `on_token` callback contract `ResponseGenerator.generate()` already exposed) and persists both
+  the user's message and the assistant's reply — including on failure, so a reload always shows
+  what happened.
+- **Document scoping** (`src/chat/scoping.py`, `src/api/routes/documents.py`): a document uploaded
+  inside a chat is scoped to that chat by default (`ChatDocument` junction table); an explicit
+  "add to shared knowledge base" toggle (`documents.is_shared`) makes it visible from all of that
+  user's other chats too. `get_allowed_doc_ids()` resolves one chat's visible set as: its own
+  chat-scoped uploads, ∪ that user's shared docs, ∪ legacy/CLI-ingested docs (`owner_user_id IS
+  NULL`, which stay visible to everyone — this preserves `rag ingest`'s existing behavior with
+  zero CLI changes). That id list is passed to `VectorStore.search()` as a `doc_filter`, which
+  Qdrant applies as `MatchAny` (OR-match across the list) rather than the single-value
+  `MatchValue` equality filter it used before this rebuild. A chat with nothing visible
+  short-circuits with a friendly note instead of querying Qdrant with an empty filter.
+- **Multi-provider generation, BYOK** (`src/generation/base_client.py`,
+  `provider_factory.py`, `src/api/routes/settings.py`): `OllamaClient`/`OpenAIClient`/
+  `AnthropicClient` all implement one small `LLMClient` interface (`generate`/`generate_stream`/
+  `.model` — the entire surface `ResponseGenerator` actually calls). `create_llm_client()`
+  dispatches on the chat's `provider`, raising a clear `MissingApiKeyError` (surfaced as a normal
+  in-chat error, not a crash) rather than letting a cloud SDK throw its own exception when no key
+  is on file. A user's OpenAI/Anthropic key is entered once in the Settings modal, encrypted at
+  rest with Fernet (`src/core/crypto.py`, keyed by `SECRET_KEY`), and decrypted server-side only
+  for the duration of one generation call. **Only the live prompt for a chat's selected cloud
+  provider ever leaves the machine, and only when that provider is explicitly selected** —
+  documents, embeddings, and chat history are never sent anywhere regardless of provider choice.
+- Shares ingestion logic with the CLI through `src/document_processing/ingestion_service.py`
+  (now parameterized with `owner_user_id`/`is_shared`, defaulting to today's CLI behavior), so
+  upload-triggered ingestion and `rag ingest` can't drift apart.
+- Keeps the embedder, re-ranker, and the default Ollama LLM client warm for the server's
+  lifetime, but opens and closes a fresh `VectorStore` per request (see Concurrency note below)
+  — Qdrant's embedded mode only allows one open client on its storage path at a time. Cloud
+  provider clients (`OpenAIClient`/`AnthropicClient`) are built fresh per request instead, since
+  they may need a different decrypted API key per call and don't do `OllamaClient`'s eager
+  connection test (which would otherwise cost a billed API call just to construct the object).
+
+**Concurrency note**: because of that single-client constraint, the web server and the `rag`
+CLI (`ingest`/`query`) shouldn't be run against the same `data/vector_store` at the same time.
 
 ## Technology Stack
 
@@ -296,8 +351,17 @@ rag index status
 ### UI & CLI
 - **Click**: CLI framework
 - **Rich**: Terminal formatting
-- **FastAPI**: REST API
-- **Gradio**: Web UI
+- **FastAPI**: REST/SSE API + static frontend host
+### Auth & Security
+- **bcrypt**: Password hashing
+- **cryptography (Fernet)**: Encryption at rest for stored provider API keys
+- **email-validator**: Pydantic `EmailStr` validation for signup
+
+### Cloud LLM Providers (opt-in BYOK)
+- **openai**: OpenAI chat completions (`OpenAIClient`)
+- **anthropic**: Anthropic messages API (`AnthropicClient`) — pinned `^0.40.0`; 0.39.x is
+  incompatible with the httpx version already pinned transitively by other deps (it passes a
+  `proxies` kwarg httpx 0.28+ rejects)
 
 ### Utilities
 - **loguru**: Structured logging
@@ -326,6 +390,11 @@ MAX_CONTEXT_TOKENS=8192
 # API
 API_HOST=0.0.0.0
 API_PORT=8000
+
+# Auth & Security (web platform) — required, the app refuses to start without it
+# Generate with:
+#   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+SECRET_KEY=
 
 # Logging
 LOG_LEVEL=INFO
@@ -393,15 +462,23 @@ User Response
 ## Security & Privacy
 
 ### Privacy Guarantees
-- 100% local processing
-- No external API calls (except model downloads)
+- All storage — documents, embeddings, chat history, and stored provider API keys — stays local
+  regardless of which LLM provider a chat uses
+- Local Ollama is the default provider and requires no external API calls at all
+- OpenAI/Anthropic are strictly opt-in per chat (BYOK): choosing one sends **only that request's
+  live prompt** to the provider's API — never documents, embeddings, or other chats' history —
+  and only for the duration of that one generation call
 - No telemetry or tracking
-- Data never leaves local machine
 
 ### Data Protection
 - Local file storage with OS permissions
-- No cloud storage or services
+- No cloud storage or services (aside from a user's own explicitly-chosen cloud LLM provider)
 - SQLite database with file-level security
+- Passwords hashed with bcrypt, never stored in plaintext
+- Session tokens are opaque and server-revocable (not JWT) — logout deletes the session row, so
+  no app-wide secret rotation is needed to invalidate one user's session
+- Provider API keys encrypted at rest (Fernet, keyed by `SECRET_KEY`) and never echoed back to
+  the client once stored — the Settings UI shows only a masked suffix
 
 ## Scalability
 
@@ -436,21 +513,12 @@ User Response
 
 ## Future Enhancements
 
-### Phase 2
-- Complete graph-based retrieval
-- REST API implementation
-- Web UI development
-
-### Phase 3
-- Multi-modal support (understand tables, figures)
+### Later
+- Graph-based retrieval
+- Multi-modal support (retrieve tables/figures by semantic similarity, not just prose)
 - Query expansion and rewriting
-- Conversational mode (multi-turn)
-
-### Phase 4
 - Hybrid search (BM25 + vector)
-- Advanced analytics
-- Document management UI
-- Export and reporting
+- Advanced analytics, export and reporting
 
 ## References
 
@@ -461,4 +529,4 @@ User Response
 
 ---
 
-**Last Updated**: 2026-01-29
+**Last Updated**: 2026-09-07

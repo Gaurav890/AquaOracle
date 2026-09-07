@@ -40,15 +40,25 @@ sqlalchemy = "^2.0.35"
 pydantic = "^2.9.0"
 pydantic-settings = "^2.5.0"
 
+# Auth & Security
+bcrypt = "^4.2.0"
+cryptography = "^43.0.0"
+email-validator = "^2.2.0"
+
+# Cloud LLM providers (opt-in BYOK; only the live prompt leaves the machine)
+openai = "^1.54.0"
+# >=0.40 required: 0.39 passes a `proxies` kwarg to httpx that newer httpx
+# (already pinned transitively to 0.28+ by other deps) rejects outright.
+anthropic = "^0.40.0"
+
 # API
 fastapi = "^0.115.0"
 uvicorn = "^0.32.0"
 python-multipart = "^0.0.17"
 
-# CLI & Web UI
+# CLI
 click = "^8.1.7"
 rich = "^13.9.0"
-gradio = "^4.44.0"
 
 # Utilities
 python-dotenv = "^1.0.1"

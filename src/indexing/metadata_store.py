@@ -79,6 +79,20 @@ class MetadataStore:
             except sqlite3.OperationalError:
                 pass  # column already exists
 
+            # Migrate DBs created before per-user document scoping existed.
+            # owner_user_id IS NULL means "legacy/CLI-ingested, visible to
+            # everyone" — rag ingest has no concept of "which user", so this
+            # is the natural default and keeps existing behavior unchanged.
+            try:
+                cursor.execute("ALTER TABLE documents ADD COLUMN owner_user_id TEXT")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                cursor.execute("ALTER TABLE documents ADD COLUMN is_shared BOOLEAN DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_documents_owner ON documents(owner_user_id)")
+
             # Tables table
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS tables (
@@ -126,8 +140,8 @@ class MetadataStore:
                     INSERT OR REPLACE INTO documents (
                         doc_id, file_name, file_path, title, author,
                         organization, year, page_count, file_size,
-                        processed_at, metadata_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        processed_at, metadata_json, owner_user_id, is_shared
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     doc_id,
                     metadata.get("file_name"),
@@ -140,6 +154,8 @@ class MetadataStore:
                     metadata.get("file_size", 0),
                     metadata.get("processed_at", datetime.now().isoformat()),
                     json.dumps(metadata),
+                    metadata.get("owner_user_id"),
+                    bool(metadata.get("is_shared", False)),
                 ))
 
                 conn.commit()
@@ -232,14 +248,26 @@ class MetadataStore:
 
         return None
 
-    def list_documents(self) -> List[Dict[str, Any]]:
-        """List all documents."""
+    def list_documents(self, owner_user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        List documents. With no owner_user_id, returns everything (CLI/admin
+        view). With one, returns that user's own documents plus legacy/
+        CLI-ingested documents (owner_user_id IS NULL) — but NOT other
+        users' private documents.
+        """
         try:
             with sqlite3.connect(self.db_path) as conn:
                 conn.row_factory = sqlite3.Row
                 cursor = conn.cursor()
 
-                cursor.execute("SELECT * FROM documents ORDER BY processed_at DESC")
+                if owner_user_id is None:
+                    cursor.execute("SELECT * FROM documents ORDER BY processed_at DESC")
+                else:
+                    cursor.execute(
+                        "SELECT * FROM documents WHERE owner_user_id = ? OR owner_user_id IS NULL "
+                        "ORDER BY processed_at DESC",
+                        (owner_user_id,),
+                    )
                 rows = cursor.fetchall()
 
                 return [dict(row) for row in rows]
@@ -247,6 +275,35 @@ class MetadataStore:
         except Exception as e:
             self.logger.error(f"Failed to list documents: {e}")
             return []
+
+    def list_shared_doc_ids(self, owner_user_id: str) -> List[str]:
+        """doc_ids visible to every chat this user has: their own docs marked
+        shared, plus legacy/CLI-ingested docs (always visible to everyone)."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT doc_id FROM documents WHERE (owner_user_id = ? AND is_shared = 1) "
+                    "OR owner_user_id IS NULL",
+                    (owner_user_id,),
+                )
+                return [row[0] for row in cursor.fetchall()]
+
+        except Exception as e:
+            self.logger.error(f"Failed to list shared documents for {owner_user_id}: {e}")
+            return []
+
+    def set_shared(self, doc_id: str, is_shared: bool) -> bool:
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("UPDATE documents SET is_shared = ? WHERE doc_id = ?", (bool(is_shared), doc_id))
+                conn.commit()
+                return cursor.rowcount > 0
+
+        except Exception as e:
+            self.logger.error(f"Failed to set is_shared for {doc_id}: {e}")
+            return False
 
     def get_stats(self) -> Dict[str, Any]:
         """Get database statistics."""

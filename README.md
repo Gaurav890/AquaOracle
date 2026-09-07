@@ -4,10 +4,13 @@ Privacy-focused Retrieval-Augmented Generation (RAG) platform that answers quest
 
 ## Features
 
-- **100% Local & Private** - All processing on your machine using Ollama
-- **Source Citations** - Every answer includes document names and page numbers
+- **Local-First & Private** - Documents, embeddings, and chat history always stay on your machine, regardless of which LLM answers a question
+- **Source Citations** - Every answer includes document names, page numbers, and line ranges
 - **Multi-Stage Retrieval** - Vector search → Re-ranking → Context assembly
 - **Comprehensive PDF Analysis** - Extracts text, tables, figures, and metadata
+- **Multi-User Web App** - Real accounts, multiple persistent chats per user, streamed answers
+- **Per-Chat & Shared Documents** - Upload a PDF into one chat, or explicitly share it to your whole knowledge base
+- **Bring Your Own Key (optional)** - Answer with local Ollama (default) or opt in to OpenAI/Anthropic per chat — only that chat's live prompt ever leaves the machine
 - **Docker Support** - Easy setup for collaborators
 
 ---
@@ -90,6 +93,7 @@ make list
 | `make query Q="question"` | Ask a question |
 | `make status` | Show index statistics |
 | `make list` | List all indexed documents |
+| `make web` | Launch the web UI at http://localhost:7860 |
 | `make shell` | Open interactive terminal in container |
 | `make logs` | View application logs |
 | `make clean` | Remove all data and start fresh |
@@ -138,8 +142,11 @@ RAG/
 │   ├── generation/         # LLM response generation
 │   ├── graph/              # Semantic graph (coming soon)
 │   ├── cli/                # Command-line interface
-│   ├── api/                # REST API (coming soon)
-│   └── web/                # Web UI (coming soon)
+│   ├── auth/                # Multi-user accounts, sessions, API-key storage
+│   ├── chat/                # Chat/message models, per-chat document scoping
+│   ├── api/                 # FastAPI app: auth/chats/documents/settings routes
+│   └── web/
+│       └── static/          # Vanilla HTML/CSS/JS frontend (served by FastAPI)
 ├── config/                 # Configuration files
 │   ├── models.yaml         # Model configurations
 │   ├── retrieval.yaml      # Retrieval parameters
@@ -201,6 +208,52 @@ Citations point to the specific lines a chunk came from, not just the page — c
 
 ---
 
+## Web UI
+
+Prefer a browser to the terminal? `make web` (or `rag web` outside Docker) launches a
+multi-user chat platform at **http://localhost:7860**:
+
+- **Accounts** — sign up / log in; each user has their own chats and documents.
+- **Chat** — create as many persistent conversations as you like, ask questions, watch the
+  answer stream in token-by-token, see exactly which sources it cited (with page and line
+  numbers) underneath.
+- **Documents** — upload a PDF into a chat (scoped to that chat by default) via the
+  documents drawer, or check "add to my shared knowledge base" to make it visible from your
+  other chats too. A chat with no visible documents says so, rather than guessing.
+- **Provider** — click the provider badge in a chat's top bar to switch between local Ollama
+  (default, no setup needed) and OpenAI/Anthropic, and optionally pin a specific model.
+- **Settings** — add/remove your own OpenAI/Anthropic API keys (Settings button in the
+  sidebar). Keys are encrypted at rest and never echoed back — the UI only shows a masked
+  suffix once saved.
+
+```bash
+make web                # Docker
+rag web                 # Native (Poetry)
+rag web --port 8080     # Use a different port
+```
+
+**Before first run**, the app needs a `SECRET_KEY` in `.env` (used to encrypt stored provider
+API keys — the app refuses to start without one):
+
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+# paste the output into .env as SECRET_KEY=...
+```
+
+**Privacy model**: documents, embeddings, and chat history are always stored locally, no
+matter which provider a chat uses. Choosing OpenAI or Anthropic for a chat sends only that
+chat's live prompt to the provider's API for that one request — and only because you
+explicitly selected that provider. Local Ollama (the default) never leaves the machine at all.
+
+The web server keeps the embedder, re-ranker, and the default Ollama client warm for its whole
+lifetime, so after the first query, subsequent ones skip that reload cost (unlike the CLI,
+which is a fresh process every time). One caveat: Qdrant's embedded vector store only allows
+one open client on its storage path at a time, so don't run `rag web` and `rag query`/
+`rag ingest` against the same `data/` folder simultaneously — the same restriction that
+already applied between `rag ingest` and `rag query`.
+
+---
+
 ## Configuration
 
 ### Environment Variables
@@ -213,10 +266,17 @@ OLLAMA_HOST=http://localhost:11434
 OLLAMA_LLM_MODEL=llama3.1:8b
 OLLAMA_EMBED_MODEL=nomic-embed-text
 
+# Web platform — required to run `rag web`, generate with:
+#   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+SECRET_KEY=
+
 # Logging
 LOG_LEVEL=INFO
 LOG_FILE=logs/rag.log
 ```
+
+OpenAI/Anthropic keys are **not** set here — each user adds their own from the web app's
+Settings modal, encrypted at rest in the local database rather than living in `.env`.
 
 Note: retrieval sizing (`top_k`, `top_n`, `max_context_tokens`) is controlled by `config/retrieval.yaml`, not `.env` — see the Retrieval Configuration section below. `rag query --top-k`/`--top-n` override the YAML defaults for a single query.
 
@@ -361,25 +421,26 @@ If you encounter memory issues:
 
 ## Technology Stack
 
-- **LLM**: Ollama (llama3.1:8b) - 128k context window
-- **Embeddings**: nomic-embed-text (768 dimensions)
+- **LLM**: Ollama (llama3.1:8b) by default — 128k context window; opt-in OpenAI or Anthropic per chat
+- **Embeddings**: nomic-embed-text (768 dimensions) — always local, regardless of LLM provider choice
 - **Vector Store**: Qdrant (embedded mode, HNSW indexing)
 - **Re-ranker**: sentence-transformers (MiniLLM-L6-v2)
 - **PDF Processing**: PyMuPDF, pdfplumber, pytesseract
 - **Metadata Store**: SQLite
 - **Graph**: NetworkX (coming soon)
 - **CLI**: Click + Rich (colored terminal output)
+- **Web platform**: FastAPI + hand-written vanilla HTML/CSS/JS (no Node toolchain), multi-user auth (bcrypt + server-side sessions), API keys encrypted at rest (Fernet)
 - **Containerization**: Docker + docker-compose
 
 ---
 
 ## Privacy & Security
 
-- **100% Local**: All processing happens on your machine
-- **No External API Calls**: Except initial model downloads
+- **Local-First Storage**: documents, embeddings, and chat history always stay on your machine, no matter which LLM provider you pick for a chat
+- **Cloud Providers Are Opt-In**: local Ollama is the default and needs no external calls at all; OpenAI/Anthropic only get that one chat's live prompt, only when you've explicitly selected them for it
 - **No Telemetry**: No usage data sent anywhere
-- **Secure Storage**: All data in local filesystem
-- **No Internet Required**: After initial setup (for queries)
+- **Secure Storage**: passwords hashed (bcrypt), provider API keys encrypted at rest (Fernet), session tokens are opaque and server-revocable (not JWT)
+- **No Internet Required**: for the default local (Ollama) setup, after initial model download
 
 ---
 
