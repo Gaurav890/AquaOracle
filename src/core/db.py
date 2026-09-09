@@ -58,7 +58,23 @@ def init_db() -> None:
     except ImportError:
         pass  # not created until Phase 2
 
-    Base.metadata.create_all(_get_engine())
+    try:
+        from src.eval import models as _eval_models  # noqa: F401
+    except ImportError:
+        pass
+
+    engine = _get_engine()
+    Base.metadata.create_all(engine)
+
+    # create_all() only adds missing TABLES, never columns to ones that
+    # already exist — users predates is_admin, so it needs its own small
+    # additive migration (same ad-hoc ALTER TABLE pattern already used in
+    # src/indexing/metadata_store.py for its raw-sqlite3 schema).
+    with engine.connect() as conn:
+        columns = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(users)")]
+        if "is_admin" not in columns:
+            conn.exec_driver_sql("ALTER TABLE users ADD COLUMN is_admin BOOLEAN DEFAULT 0")
+            conn.commit()
 
 
 def get_db():

@@ -6,7 +6,7 @@ from typing import Iterator, Optional
 from loguru import logger
 from openai import OpenAI
 
-from src.generation.base_client import LLMClient
+from src.generation.base_client import LLMClient, UsageCallback, UsageInfo
 
 DEFAULT_MODEL = "gpt-4o-mini"
 
@@ -45,6 +45,7 @@ class OpenAIClient(LLMClient):
         system_prompt: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
+        on_usage: Optional[UsageCallback] = None,
     ) -> str:
         try:
             response = self._client.chat.completions.create(
@@ -53,6 +54,11 @@ class OpenAIClient(LLMClient):
                 temperature=temperature if temperature is not None else self.temperature,
                 max_tokens=max_tokens or self.max_tokens,
             )
+            if on_usage and response.usage:
+                on_usage(UsageInfo(
+                    prompt_tokens=response.usage.prompt_tokens,
+                    completion_tokens=response.usage.completion_tokens,
+                ))
             return response.choices[0].message.content or ""
         except Exception as e:
             self.logger.error(f"Generation failed: {e}")
@@ -64,6 +70,7 @@ class OpenAIClient(LLMClient):
         system_prompt: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
+        on_usage: Optional[UsageCallback] = None,
     ) -> Iterator[str]:
         try:
             stream = self._client.chat.completions.create(
@@ -72,11 +79,20 @@ class OpenAIClient(LLMClient):
                 temperature=temperature if temperature is not None else self.temperature,
                 max_tokens=max_tokens or self.max_tokens,
                 stream=True,
+                # Required for the SDK to populate a final chunk's .usage —
+                # without this, streamed responses never report token counts.
+                stream_options={"include_usage": True},
             )
             for chunk in stream:
-                delta = chunk.choices[0].delta.content
-                if delta:
-                    yield delta
+                if chunk.choices:
+                    delta = chunk.choices[0].delta.content
+                    if delta:
+                        yield delta
+                if on_usage and chunk.usage:
+                    on_usage(UsageInfo(
+                        prompt_tokens=chunk.usage.prompt_tokens,
+                        completion_tokens=chunk.usage.completion_tokens,
+                    ))
         except Exception as e:
             self.logger.error(f"Streaming generation failed: {e}")
             raise

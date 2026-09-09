@@ -3,7 +3,7 @@
 import json
 import uuid
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
@@ -15,6 +15,7 @@ from src.api.models.schemas import (
     ChatOut,
     ChatProviderUpdate,
     ChatUpdate,
+    FeedbackRequest,
     MessageOut,
     SendMessageRequest,
 )
@@ -29,10 +30,13 @@ from src.auth.models import User
 from src.chat.models import Chat, Message
 from src.chat.scoping import get_allowed_doc_ids
 from src.core.config import settings
+from src.eval.models import QueryLog
+from src.eval.service import save_query_log
 from src.generation.provider_factory import SUPPORTED_PROVIDERS, MissingApiKeyError
 from src.indexing.metadata_store import MetadataStore
 
 router = APIRouter(prefix="/api/chats", tags=["chats"])
+messages_router = APIRouter(prefix="/api/messages", tags=["messages"])
 
 
 def _get_owned_chat(db: Session, chat_id: str, user: User) -> Chat:
@@ -101,10 +105,14 @@ def delete_chat(chat_id: str, db: Session = Depends(get_db), user: User = Depend
 def list_messages(chat_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     _get_owned_chat(db, chat_id, user)
     messages = db.query(Message).filter(Message.chat_id == chat_id).order_by(Message.created_at.asc()).all()
-    return [_message_to_out(m) for m in messages]
+    feedback_by_message_id = {
+        row.message_id: row.user_feedback
+        for row in db.query(QueryLog.message_id, QueryLog.user_feedback).filter(QueryLog.chat_id == chat_id)
+    }
+    return [_message_to_out(m, feedback_by_message_id.get(m.id)) for m in messages]
 
 
-def _message_to_out(m: Message) -> MessageOut:
+def _message_to_out(m: Message, user_feedback: Optional[str] = None) -> MessageOut:
     return MessageOut(
         id=m.id,
         chat_id=m.chat_id,
@@ -114,6 +122,7 @@ def _message_to_out(m: Message) -> MessageOut:
         provider=m.provider,
         model=m.model,
         created_at=m.created_at,
+        user_feedback=user_feedback,
     )
 
 
@@ -135,7 +144,7 @@ def send_message(
     chat.updated_at = datetime.utcnow()
     db.commit()
 
-    def persist_assistant_message(response) -> None:
+    def persist_assistant_message(response) -> str:
         assistant_message = Message(
             id=uuid.uuid4().hex,
             chat_id=chat.id,
@@ -147,9 +156,21 @@ def send_message(
         )
         db.add(assistant_message)
         chat.updated_at = datetime.utcnow()
+        save_query_log(
+            db,
+            message_id=assistant_message.id,
+            chat_id=chat.id,
+            user_id=user.id,
+            question=payload.message,
+            provider=chat.provider,
+            model=chat.model,
+            allowed_doc_ids=allowed_doc_ids,
+            response=response,
+        )
         db.commit()
+        return assistant_message.id
 
-    def persist_error(message: str) -> None:
+    def persist_error(message: str, containment_event: str = "generation_error") -> str:
         assistant_message = Message(
             id=uuid.uuid4().hex,
             chat_id=chat.id,
@@ -159,13 +180,38 @@ def send_message(
         )
         db.add(assistant_message)
         chat.updated_at = datetime.utcnow()
+        save_query_log(
+            db,
+            message_id=assistant_message.id,
+            chat_id=chat.id,
+            user_id=user.id,
+            question=payload.message,
+            provider=chat.provider,
+            model=chat.model,
+            allowed_doc_ids=allowed_doc_ids,
+            containment_event=containment_event,
+            containment_detail=message,
+        )
         db.commit()
+        return assistant_message.id
 
-    def persist_error_as_assistant_note(message: str) -> None:
+    def persist_error_as_assistant_note(message: str) -> str:
         assistant_message = Message(id=uuid.uuid4().hex, chat_id=chat.id, role="assistant", content=message)
         db.add(assistant_message)
         chat.updated_at = datetime.utcnow()
+        save_query_log(
+            db,
+            message_id=assistant_message.id,
+            chat_id=chat.id,
+            user_id=user.id,
+            question=payload.message,
+            provider=chat.provider,
+            model=chat.model,
+            allowed_doc_ids=allowed_doc_ids,
+            containment_event="no_documents",
+        )
         db.commit()
+        return assistant_message.id
 
     metadata_store = MetadataStore(settings.full_metadata_db_path)
     allowed_doc_ids = get_allowed_doc_ids(db, metadata_store, chat_id=chat.id, user_id=user.id)
@@ -193,7 +239,7 @@ def send_message(
                     provider=chat.provider, model=chat.model, api_key=api_key
                 )
             except MissingApiKeyError as e:
-                persist_error(str(e))
+                persist_error(str(e), containment_event="missing_api_key")
                 yield sse_event("error", {"message": str(e)})
                 return
             try:
@@ -211,3 +257,24 @@ def send_message(
                 vector_store.close()
 
     return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+@messages_router.post("/{message_id}/feedback", status_code=status.HTTP_204_NO_CONTENT)
+def submit_feedback(
+    message_id: str, payload: FeedbackRequest, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+):
+    message = db.get(Message, message_id)
+    if message is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message not found")
+    # Reuses the same ownership check as everywhere else — 404, not 403, so
+    # this doesn't reveal whether a message_id exists for another user.
+    _get_owned_chat(db, message.chat_id, user)
+
+    log = db.query(QueryLog).filter(QueryLog.message_id == message_id).first()
+    if log is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No query log for this message")
+
+    log.user_feedback = payload.rating
+    log.user_feedback_comment = payload.comment
+    log.feedback_at = datetime.utcnow()
+    db.commit()

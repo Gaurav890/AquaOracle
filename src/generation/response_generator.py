@@ -1,11 +1,13 @@
 """Complete RAG response generation."""
 
 import re
+import time
 from typing import Callable, Dict, Any, Optional
 from dataclasses import dataclass
 from loguru import logger
 
 from src.retrieval.retrieval_pipeline import RetrievalPipeline, RetrievalResult
+from src.generation.base_client import UsageInfo
 from src.generation.ollama_client import OllamaClient
 from src.generation.prompt_templates import SYSTEM_PROMPT, build_rag_prompt
 from src.utils.citations import format_page_citation
@@ -89,9 +91,17 @@ class ResponseGenerator:
 
         # Step 3: Generate answer
         self.logger.info("Generating answer with LLM")
+        usage_holder: Dict[str, Optional[UsageInfo]] = {"usage": None}
+
+        def _capture_usage(usage: UsageInfo) -> None:
+            usage_holder["usage"] = usage
+
+        generation_start = time.perf_counter()
         if on_token:
             pieces = []
-            for piece in self.llm_client.generate_stream(prompt=prompt, system_prompt=SYSTEM_PROMPT):
+            for piece in self.llm_client.generate_stream(
+                prompt=prompt, system_prompt=SYSTEM_PROMPT, on_usage=_capture_usage
+            ):
                 pieces.append(piece)
                 on_token(piece)
             answer = "".join(pieces)
@@ -99,7 +109,9 @@ class ResponseGenerator:
             answer = self.llm_client.generate(
                 prompt=prompt,
                 system_prompt=SYSTEM_PROMPT,
+                on_usage=_capture_usage,
             )
+        generation_ms = round((time.perf_counter() - generation_start) * 1000, 1)
 
         # Step 4: Format sources — only the ones the answer actually cites,
         # not every chunk that was fed to the LLM as context. Most retrieved
@@ -114,13 +126,31 @@ class ResponseGenerator:
             only_indices=cited_indices,
         )
 
-        # Step 5: Build metadata
+        # Step 5: Verification signals — cheap, automatic checks of whether
+        # the answer is actually grounded in what was retrieved.
+        verification = self._compute_verification(cited_indices, retrieval_result.chunks, answer, sources)
+
+        # Step 6: Build metadata
+        retrieval_timing = retrieval_result.metadata.get("timing_ms", {})
+        usage = usage_holder["usage"]
         metadata = {
             "question": question,
             "retrieved_chunks": len(retrieval_result.chunks),
+            "retrieved_doc_ids": sorted({c.get("doc_id") for c in retrieval_result.chunks if c.get("doc_id")}),
+            "retrieved_chunk_ids": [c.get("chunk_id") for c in retrieval_result.chunks if c.get("chunk_id")],
             "total_tokens": retrieval_result.total_tokens,
             "retrieval_metadata": retrieval_result.metadata,
             "model": self.llm_client.model,
+            "usage": usage,
+            "timing_ms": {
+                "vector_search": retrieval_timing.get("vector_search"),
+                "rerank": retrieval_timing.get("rerank"),
+                "generation": generation_ms,
+                "total": round(
+                    sum(v for v in retrieval_timing.values() if v is not None) + generation_ms, 1
+                ),
+            },
+            "verification": verification,
         }
 
         response = RAGResponse(
@@ -196,6 +226,7 @@ class ResponseGenerator:
                 "page_numbers": page_numbers,
                 "line_ranges": chunk.get("line_ranges") or {},
                 "section": section,
+                "rerank_score": chunk.get("rerank_score"),
             }
             sources.append(source_entry)
 
@@ -205,3 +236,39 @@ class ResponseGenerator:
         formatted_sources = "\n".join(formatted_lines)
 
         return sources, formatted_sources
+
+    def _compute_verification(
+        self,
+        cited_indices: set,
+        chunks: list,
+        answer: str,
+        sources: list,
+    ) -> Dict[str, Any]:
+        """
+        Cheap, automatic groundedness signals — no LLM-judge call, just
+        cross-checking the answer against what was actually retrieved.
+
+        - ungrounded_citation_indices: [n] markers the model wrote that
+          don't correspond to any chunk that was really retrieved (e.g. it
+          says "[7]" but only 6 chunks were in context). _format_sources
+          silently drops these rather than flagging them, so this is the
+          only place that catches a hallucinated citation number.
+        - avg_rerank_score_of_cited: retrieval-confidence proxy for the
+          chunks the answer actually used, not everything retrieved.
+        - no_citations_flag: a substantial answer that cites nothing is a
+          proxy for "answered from the model's own knowledge instead of
+          the retrieved context" — worth flagging even though it's not
+          proof either way.
+        """
+        valid_indices = set(range(1, len(chunks) + 1))
+        ungrounded = sorted(cited_indices - valid_indices)
+
+        rerank_scores = [s["rerank_score"] for s in sources if s.get("rerank_score") is not None]
+        avg_rerank_score = round(sum(rerank_scores) / len(rerank_scores), 4) if rerank_scores else None
+
+        return {
+            "cited_indices": sorted(cited_indices),
+            "ungrounded_citation_indices": ungrounded,
+            "avg_rerank_score_of_cited": avg_rerank_score,
+            "no_citations_flag": len(cited_indices) == 0 and len(answer) > 200,
+        }

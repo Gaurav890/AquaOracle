@@ -24,6 +24,7 @@ class UserOut(BaseModel):
     email: str
     display_name: Optional[str] = None
     created_at: datetime
+    is_admin: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -63,12 +64,21 @@ class MessageOut(BaseModel):
     provider: Optional[str] = None
     model: Optional[str] = None
     created_at: datetime
+    # None for messages with no QueryLog row (predates this feature, or
+    # role == "user") and for assistant messages no one has rated yet —
+    # the frontend treats missing feedback as neutral, not an error.
+    user_feedback: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
 
 class SendMessageRequest(BaseModel):
     message: str = Field(min_length=1)
+
+
+class FeedbackRequest(BaseModel):
+    rating: str = Field(pattern="^(up|down)$")
+    comment: Optional[str] = None
 
 
 # --- Provider API keys ------------------------------------------------------

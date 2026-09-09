@@ -16,6 +16,7 @@ class User(Base):
     display_name = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     is_active = Column(Boolean, default=True)
+    is_admin = Column(Boolean, default=False)  # can view the Eval tab's cross-user aggregate
 
 
 class UserSession(Base):

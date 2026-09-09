@@ -36,12 +36,15 @@ def create_app() -> FastAPI:
     from src.api.routes import auth as auth_routes
     from src.api.routes import chats as chats_routes
     from src.api.routes import documents as documents_routes
+    from src.api.routes import eval as eval_routes
     from src.api.routes import settings as settings_routes
 
     app.include_router(auth_routes.router)
     app.include_router(chats_routes.router)
+    app.include_router(chats_routes.messages_router)
     app.include_router(documents_routes.router)
     app.include_router(settings_routes.router)
+    app.include_router(eval_routes.router)
 
     @app.get("/", include_in_schema=False)
     async def root():

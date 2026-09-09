@@ -4,7 +4,7 @@ from typing import Optional, Iterator
 import ollama
 from loguru import logger
 
-from src.generation.base_client import LLMClient
+from src.generation.base_client import LLMClient, UsageCallback, UsageInfo
 
 
 class OllamaClient(LLMClient):
@@ -56,6 +56,7 @@ class OllamaClient(LLMClient):
         system_prompt: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
+        on_usage: Optional[UsageCallback] = None,
     ) -> str:
         """
         Generate text completion.
@@ -65,6 +66,8 @@ class OllamaClient(LLMClient):
             system_prompt: System prompt for context
             temperature: Override temperature
             max_tokens: Override max tokens
+            on_usage: If given, called once with token counts from the
+                response (Ollama reports prompt_eval_count/eval_count).
 
         Returns:
             Generated text
@@ -91,6 +94,12 @@ class OllamaClient(LLMClient):
                     options=options,
                 )
 
+            if on_usage:
+                on_usage(UsageInfo(
+                    prompt_tokens=response.get("prompt_eval_count"),
+                    completion_tokens=response.get("eval_count"),
+                ))
+
             return response['response']
 
         except Exception as e:
@@ -103,6 +112,7 @@ class OllamaClient(LLMClient):
         system_prompt: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
+        on_usage: Optional[UsageCallback] = None,
     ) -> Iterator[str]:
         """
         Generate text with streaming.
@@ -112,6 +122,9 @@ class OllamaClient(LLMClient):
             system_prompt: System prompt
             temperature: Sampling temperature
             max_tokens: Override max tokens
+            on_usage: If given, called once with token counts from the
+                final chunk (Ollama reports prompt_eval_count/eval_count
+                only on the chunk where done=True).
 
         Yields:
             Generated text chunks
@@ -141,6 +154,11 @@ class OllamaClient(LLMClient):
             for chunk in stream:
                 if 'response' in chunk:
                     yield chunk['response']
+                if chunk.get("done") and on_usage:
+                    on_usage(UsageInfo(
+                        prompt_tokens=chunk.get("prompt_eval_count"),
+                        completion_tokens=chunk.get("eval_count"),
+                    ))
 
         except Exception as e:
             self.logger.error(f"Streaming generation failed: {e}")

@@ -9,7 +9,7 @@ from src.auth.models import User, UserSession
 from src.core.config import settings
 from src.core.db import get_db
 
-__all__ = ["get_db", "get_current_user", "get_current_user_optional"]
+__all__ = ["get_db", "get_current_user", "get_current_user_optional", "get_current_admin_user"]
 
 
 def get_current_user_optional(request: Request, db: Session = Depends(get_db)):
@@ -34,4 +34,10 @@ def get_current_user_optional(request: Request, db: Session = Depends(get_db)):
 def get_current_user(user=Depends(get_current_user_optional)) -> User:
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    return user
+
+
+def get_current_admin_user(user: User = Depends(get_current_user)) -> User:
+    if not user.is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
     return user

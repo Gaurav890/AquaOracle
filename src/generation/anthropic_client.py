@@ -6,7 +6,7 @@ from typing import Iterator, Optional
 from anthropic import Anthropic
 from loguru import logger
 
-from src.generation.base_client import LLMClient
+from src.generation.base_client import LLMClient, UsageCallback, UsageInfo
 
 DEFAULT_MODEL = "claude-sonnet-5"
 
@@ -36,6 +36,7 @@ class AnthropicClient(LLMClient):
         system_prompt: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
+        on_usage: Optional[UsageCallback] = None,
     ) -> str:
         try:
             response = self._client.messages.create(
@@ -45,6 +46,11 @@ class AnthropicClient(LLMClient):
                 temperature=temperature if temperature is not None else self.temperature,
                 max_tokens=max_tokens or self.max_tokens,
             )
+            if on_usage and response.usage:
+                on_usage(UsageInfo(
+                    prompt_tokens=response.usage.input_tokens,
+                    completion_tokens=response.usage.output_tokens,
+                ))
             return "".join(block.text for block in response.content if block.type == "text")
         except Exception as e:
             self.logger.error(f"Generation failed: {e}")
@@ -56,6 +62,7 @@ class AnthropicClient(LLMClient):
         system_prompt: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
+        on_usage: Optional[UsageCallback] = None,
     ) -> Iterator[str]:
         try:
             with self._client.messages.stream(
@@ -67,6 +74,12 @@ class AnthropicClient(LLMClient):
             ) as stream:
                 for text in stream.text_stream:
                     yield text
+                if on_usage:
+                    usage = stream.get_final_message().usage
+                    on_usage(UsageInfo(
+                        prompt_tokens=usage.input_tokens,
+                        completion_tokens=usage.output_tokens,
+                    ))
         except Exception as e:
             self.logger.error(f"Streaming generation failed: {e}")
             raise

@@ -58,7 +58,33 @@ const Chat = (function () {
     return wrap;
   }
 
-  function appendMessage({ role, content, sources, isError, pending }) {
+  function renderFeedbackControls(messageId, currentRating) {
+    const wrap = document.createElement("div");
+    wrap.className = "feedback-controls";
+
+    function makeButton(rating, glyph) {
+      const btn = document.createElement("button");
+      btn.className = "feedback-btn" + (currentRating === rating ? " active" : "");
+      btn.textContent = glyph;
+      btn.title = rating === "up" ? "Good answer" : "Bad answer";
+      btn.addEventListener("click", async () => {
+        try {
+          await API.post(`/api/messages/${messageId}/feedback`, { rating });
+          wrap.querySelectorAll(".feedback-btn").forEach((b) => b.classList.remove("active"));
+          btn.classList.add("active");
+        } catch (e) {
+          // No QueryLog row (e.g. a message from before this feature shipped) — nothing to rate.
+        }
+      });
+      return btn;
+    }
+
+    wrap.appendChild(makeButton("up", "\u{1F44D}"));
+    wrap.appendChild(makeButton("down", "\u{1F44E}"));
+    return wrap;
+  }
+
+  function appendMessage({ role, content, sources, isError, pending, messageId, userFeedback }) {
     const msgEl = document.createElement("div");
     msgEl.className = `message message-${role}` + (isError ? " message-error" : "");
 
@@ -73,6 +99,10 @@ const Chat = (function () {
 
     const sourcesEl = renderSources(sources);
     if (sourcesEl) msgEl.appendChild(sourcesEl);
+
+    if (role === "assistant" && !isError && messageId) {
+      msgEl.appendChild(renderFeedbackControls(messageId, userFeedback));
+    }
 
     messagesEl.querySelector(".messages-inner")?.appendChild(msgEl) || messagesEl.appendChild(msgEl);
     messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -108,6 +138,8 @@ const Chat = (function () {
         content: m.content,
         sources: m.sources,
         isError: m.content.startsWith("Error:"),
+        messageId: m.id,
+        userFeedback: m.user_feedback,
       });
     }
     setComposerEnabled(true);
@@ -138,6 +170,9 @@ const Chat = (function () {
           assistantBubble.textContent = data.answer;
           const sourcesEl = renderSources(data.sources);
           if (sourcesEl) assistantBubble.parentElement.appendChild(sourcesEl);
+          if (data.message_id) {
+            assistantBubble.parentElement.appendChild(renderFeedbackControls(data.message_id, null));
+          }
           setComposerEnabled(true);
           composerInput.focus();
           Sidebar.touchChat(currentChatId, { updated_at: new Date().toISOString() });

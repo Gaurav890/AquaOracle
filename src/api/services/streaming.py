@@ -29,7 +29,7 @@ async def stream_chat_response(
     top_k: int,
     top_n: int,
     doc_filter: Optional[dict] = None,
-    on_done: Optional[Callable[[RAGResponse], None]] = None,
+    on_done: Optional[Callable[[RAGResponse], Optional[str]]] = None,
     on_error: Optional[Callable[[str], None]] = None,
 ) -> AsyncIterator[str]:
     """Yields SSE-framed strings: 'token' events as text arrives, then one
@@ -38,7 +38,9 @@ async def stream_chat_response(
     `on_done`/`on_error` are called synchronously right before the matching
     SSE event is yielded — callers use these to persist the assistant's
     message (or lack thereof) without this module needing to know about
-    chats/messages/the DB.
+    chats/messages/the DB. `on_done`'s return value (the persisted
+    message's id, or None) is included in the 'done' event so the frontend
+    can attach feedback controls to the message it just streamed.
     """
     token_queue: "queue.Queue" = queue.Queue()
 
@@ -67,9 +69,8 @@ async def stream_chat_response(
         if kind == "token":
             yield sse_event("token", {"text": payload})
         elif kind == "done":
-            if on_done:
-                on_done(payload)
-            yield sse_event("done", {"answer": payload.answer, "sources": payload.sources})
+            message_id = on_done(payload) if on_done else None
+            yield sse_event("done", {"answer": payload.answer, "sources": payload.sources, "message_id": message_id})
             return
         else:
             if on_error:

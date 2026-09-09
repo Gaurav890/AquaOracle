@@ -1,5 +1,6 @@
 """Complete retrieval pipeline orchestration."""
 
+import time
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 from loguru import logger
@@ -79,15 +80,18 @@ class RetrievalPipeline:
         metadata = {
             "query": query,
             "stages": [],
+            "timing_ms": {},
         }
 
         # Stage 1: Vector Search
         self.logger.info(f"Stage 1: Vector search (top_k={top_k})")
+        stage_start = time.perf_counter()
         vector_results = self.vector_retriever.retrieve(
             query=query,
             top_k=top_k,
             doc_filter=doc_filter,
         )
+        metadata["timing_ms"]["vector_search"] = round((time.perf_counter() - stage_start) * 1000, 1)
         metadata["stages"].append({
             "stage": "vector_search",
             "results_count": len(vector_results),
@@ -99,11 +103,13 @@ class RetrievalPipeline:
         # Stage 2: Re-ranking
         if self.rerank_enabled and self.reranker:
             self.logger.info(f"Stage 2: Re-ranking (top_n={top_n})")
+            stage_start = time.perf_counter()
             current_results = self.reranker.rerank(
                 query=query,
                 chunks=current_results,
                 top_n=top_n,
             )
+            metadata["timing_ms"]["rerank"] = round((time.perf_counter() - stage_start) * 1000, 1)
             metadata["stages"].append({
                 "stage": "reranking",
                 "results_count": len(current_results),

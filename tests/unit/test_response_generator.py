@@ -1,6 +1,8 @@
 """Tests for citation filtering in response generation."""
 
+from src.generation.base_client import UsageInfo
 from src.generation.response_generator import ResponseGenerator
+from src.retrieval.retrieval_pipeline import RetrievalResult
 
 
 def make_generator():
@@ -8,10 +10,12 @@ def make_generator():
     return ResponseGenerator(retrieval_pipeline=None, llm_client=None)
 
 
-def make_chunk(doc_id, page_numbers, line_ranges=None):
+def make_chunk(doc_id, page_numbers, line_ranges=None, rerank_score=None):
     chunk = {"doc_id": doc_id, "page_numbers": page_numbers}
     if line_ranges is not None:
         chunk["line_ranges"] = line_ranges
+    if rerank_score is not None:
+        chunk["rerank_score"] = rerank_score
     return chunk
 
 
@@ -111,3 +115,109 @@ def test_format_sources_falls_back_to_all_when_no_indices_given():
     sources, _ = gen._format_sources(chunks, {}, only_indices=None)
 
     assert len(sources) == 2
+
+
+def test_format_sources_includes_rerank_score():
+    gen = make_generator()
+    chunks = [make_chunk("A", [1], rerank_score=0.87)]
+
+    sources, _ = gen._format_sources(chunks, {}, only_indices={1})
+
+    assert sources[0]["rerank_score"] == 0.87
+
+
+def test_verification_flags_citation_index_outside_retrieved_range():
+    """Regression test: _format_sources silently drops an out-of-range
+    citation (e.g. the model wrote "[7]" but only 3 chunks were retrieved)
+    rather than flagging it — this is the only place that catches a
+    hallucinated citation number."""
+    gen = make_generator()
+    chunks = [make_chunk("A", [1]), make_chunk("B", [2]), make_chunk("C", [3])]
+    sources, _ = gen._format_sources(chunks, {}, only_indices={1, 7})
+
+    verification = gen._compute_verification(cited_indices={1, 7}, chunks=chunks, answer="x" * 300, sources=sources)
+
+    assert verification["ungrounded_citation_indices"] == [7]
+
+
+def test_verification_averages_rerank_score_of_cited_sources_only():
+    gen = make_generator()
+    chunks = [
+        make_chunk("A", [1], rerank_score=0.9),
+        make_chunk("B", [2], rerank_score=0.3),
+        make_chunk("C", [3], rerank_score=0.6),
+    ]
+    sources, _ = gen._format_sources(chunks, {}, only_indices={1, 3})
+
+    verification = gen._compute_verification(cited_indices={1, 3}, chunks=chunks, answer="x" * 300, sources=sources)
+
+    # Only chunks 1 and 3 were cited (0.9 and 0.6) — chunk 2's 0.3 must not pull the average down.
+    assert verification["avg_rerank_score_of_cited"] == 0.75
+
+
+def test_verification_avg_rerank_score_is_none_when_no_scores_available():
+    gen = make_generator()
+    chunks = [make_chunk("A", [1])]
+    sources, _ = gen._format_sources(chunks, {}, only_indices={1})
+
+    verification = gen._compute_verification(cited_indices={1}, chunks=chunks, answer="x" * 300, sources=sources)
+
+    assert verification["avg_rerank_score_of_cited"] is None
+
+
+def test_verification_flags_substantial_answer_with_no_citations():
+    gen = make_generator()
+
+    verification = gen._compute_verification(cited_indices=set(), chunks=[], answer="x" * 300, sources=[])
+
+    assert verification["no_citations_flag"] is True
+
+
+def test_verification_does_not_flag_short_uncited_answer():
+    """A short "I don't know" / no-match answer citing nothing isn't the
+    same failure mode as a long answer that ignores its sources."""
+    gen = make_generator()
+
+    verification = gen._compute_verification(
+        cited_indices=set(), chunks=[], answer="Not found in the documents.", sources=[]
+    )
+
+    assert verification["no_citations_flag"] is False
+
+
+class _FakeRetrievalPipeline:
+    def retrieve(self, query, top_k, top_n, doc_filter=None):
+        return RetrievalResult(
+            chunks=[make_chunk("A", [1], rerank_score=0.8)],
+            citation_map={},
+            total_tokens=42,
+            metadata={"query": query, "stages": [], "timing_ms": {"vector_search": 12.0, "rerank": 3.0}},
+        )
+
+
+class _FakeLLMClient:
+    model = "fake-model"
+
+    def generate(self, prompt, system_prompt=None, on_usage=None, **kw):
+        if on_usage:
+            on_usage(UsageInfo(prompt_tokens=500, completion_tokens=50))
+        return "The answer is X [1]."
+
+
+def test_generate_metadata_includes_timing_usage_and_verification():
+    """End-to-end (mocked collaborators) check that Phase A's new
+    instrumentation actually reaches RAGResponse.metadata, not just the
+    individual helper methods in isolation."""
+    gen = ResponseGenerator(retrieval_pipeline=_FakeRetrievalPipeline(), llm_client=_FakeLLMClient())
+
+    response = gen.generate(question="What is X?")
+
+    assert response.metadata["usage"].prompt_tokens == 500
+    assert response.metadata["usage"].completion_tokens == 50
+    assert response.metadata["timing_ms"]["vector_search"] == 12.0
+    assert response.metadata["timing_ms"]["rerank"] == 3.0
+    assert response.metadata["timing_ms"]["generation"] is not None
+    assert response.metadata["timing_ms"]["total"] >= 15.0
+    assert response.metadata["verification"]["cited_indices"] == [1]
+    assert response.metadata["verification"]["ungrounded_citation_indices"] == []
+    assert response.metadata["retrieved_doc_ids"] == ["A"]

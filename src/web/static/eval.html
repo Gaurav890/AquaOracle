@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AquaOracle — Eval</title>
+  <link rel="stylesheet" href="/css/tokens.css" />
+  <link rel="stylesheet" href="/css/base.css" />
+  <link rel="stylesheet" href="/css/components.css" />
+</head>
+<body>
+  <div class="eval-page">
+    <header class="eval-topbar">
+      <div class="eval-brand"><span class="accent">&gt;</span> AquaOracle <span class="eval-brand-suffix">/ Eval</span></div>
+      <div class="eval-topbar-actions">
+        <a href="/app.html" class="btn btn-secondary btn-sm">Back to chat</a>
+        <span id="user-email"></span>
+        <button class="btn btn-sm" id="logout-btn">Log out</button>
+      </div>
+    </header>
+
+    <main class="eval-main">
+      <section>
+        <div class="eval-section-header">
+          <h2>Model comparison</h2>
+          <div class="eval-scope-toggle" id="summary-scope-toggle" style="display: none">
+            <button class="active" data-scope="mine">My queries</button>
+            <button data-scope="all">All users</button>
+          </div>
+        </div>
+        <div class="eval-table-wrap">
+          <table class="eval-table">
+            <thead>
+              <tr>
+                <th>Provider</th>
+                <th>Model</th>
+                <th>Queries</th>
+                <th>Avg prompt tok</th>
+                <th>Avg completion tok</th>
+                <th>Avg latency</th>
+                <th>Cost</th>
+                <th>Groundedness</th>
+                <th>Feedback</th>
+                <th>Deviations</th>
+              </tr>
+            </thead>
+            <tbody id="summary-tbody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section>
+        <div class="eval-section-header">
+          <h2>Query log</h2>
+          <div class="eval-scope-toggle" id="logs-scope-toggle" style="display: none">
+            <button class="active" data-scope="mine">My queries</button>
+            <button data-scope="all">All users</button>
+          </div>
+        </div>
+        <div class="eval-table-wrap">
+          <table class="eval-table">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Chat</th>
+                <th>Question</th>
+                <th>Provider / model</th>
+                <th>Latency</th>
+                <th>Groundedness</th>
+                <th>Deviation</th>
+                <th>Feedback</th>
+              </tr>
+            </thead>
+            <tbody id="logs-tbody"></tbody>
+          </table>
+        </div>
+        <div class="eval-pagination">
+          <button class="btn btn-sm" id="logs-prev">&larr; Prev</button>
+          <span id="logs-page-info"></span>
+          <button class="btn btn-sm" id="logs-next">Next &rarr;</button>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="modal-overlay" id="log-detail-modal">
+    <div class="modal" style="width: 640px">
+      <div class="modal-header">
+        <h2>Query detail</h2>
+        <button id="log-detail-close">&times;</button>
+      </div>
+      <div class="modal-body" id="log-detail-body"></div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/eval.js"></script>
+</body>
+</html>
